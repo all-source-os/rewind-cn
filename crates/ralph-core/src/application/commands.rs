@@ -1,0 +1,40 @@
+use crate::domain::ids::{AgentId, EpicId, SessionId, TaskId};
+
+pub struct CreateTask {
+    pub title: String,
+    pub description: String,
+    pub epic_id: Option<EpicId>,
+}
+
+pub struct AssignTask {
+    pub task_id: TaskId,
+    pub agent_id: AgentId,
+}
+
+pub struct StartTask {
+    pub task_id: TaskId,
+}
+
+pub struct CompleteTask {
+    pub task_id: TaskId,
+}
+
+pub struct FailTask {
+    pub task_id: TaskId,
+    pub reason: String,
+}
+
+pub struct CreateEpic {
+    pub title: String,
+    pub description: String,
+}
+
+pub struct CompleteEpic {
+    pub epic_id: EpicId,
+}
+
+pub struct StartSession;
+
+pub struct EndSession {
+    pub session_id: SessionId,
+}

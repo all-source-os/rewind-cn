@@ -24,7 +24,9 @@ pub async fn execute() -> Result<(), String> {
     config.save(Path::new(CONFIG_FILE))?;
 
     // Initialize the engine (creates event store)
-    let _engine = ralph_core::engine::RalphEngine::init(DATA_DIR).await?;
+    let _engine = ralph_core::infrastructure::engine::RalphEngine::init(DATA_DIR)
+        .await
+        .map_err(|e| e.to_string())?;
 
     info!("Initialized ralph project");
     println!("Initialized ralph project in {RALPH_DIR}/");

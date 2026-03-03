@@ -2,6 +2,8 @@ use allframe::cqrs::EventTypeName;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::ids::{AgentId, EpicId, SessionId, TaskId};
+
 /// All domain events in the Ralph system.
 ///
 /// AllFrame's CQRS is generic over a single event type per store,
@@ -11,58 +13,62 @@ use serde::{Deserialize, Serialize};
 pub enum RalphEvent {
     // Task events
     TaskCreated {
-        task_id: String,
+        task_id: TaskId,
         title: String,
         description: String,
-        epic_id: Option<String>,
+        epic_id: Option<EpicId>,
         created_at: DateTime<Utc>,
     },
     TaskAssigned {
-        task_id: String,
-        agent_id: String,
+        task_id: TaskId,
+        agent_id: AgentId,
         assigned_at: DateTime<Utc>,
     },
     TaskStarted {
-        task_id: String,
+        task_id: TaskId,
         started_at: DateTime<Utc>,
     },
     TaskCompleted {
-        task_id: String,
+        task_id: TaskId,
         completed_at: DateTime<Utc>,
     },
     TaskFailed {
-        task_id: String,
+        task_id: TaskId,
         reason: String,
         failed_at: DateTime<Utc>,
     },
     TaskBlocked {
-        task_id: String,
-        blocked_by: String,
+        task_id: TaskId,
+        blocked_by: TaskId,
         blocked_at: DateTime<Utc>,
     },
 
     // Epic events
     EpicCreated {
-        epic_id: String,
+        epic_id: EpicId,
         title: String,
         description: String,
         created_at: DateTime<Utc>,
     },
     EpicCompleted {
-        epic_id: String,
+        epic_id: EpicId,
         completed_at: DateTime<Utc>,
     },
 
     // Session events
     SessionStarted {
-        session_id: String,
+        session_id: SessionId,
         started_at: DateTime<Utc>,
     },
     SessionEnded {
-        session_id: String,
+        session_id: SessionId,
         ended_at: DateTime<Utc>,
     },
 }
 
-impl EventTypeName for RalphEvent {}
+impl EventTypeName for RalphEvent {
+    fn event_type_name() -> &'static str {
+        "ralph.domain.event"
+    }
+}
 impl allframe::cqrs::Event for RalphEvent {}

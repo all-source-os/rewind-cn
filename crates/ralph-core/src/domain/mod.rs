@@ -1,4 +1,5 @@
-pub mod aggregates;
-pub mod commands;
+pub mod error;
 pub mod events;
-pub mod projections;
+pub mod ids;
+pub mod model;
+pub mod ports;
