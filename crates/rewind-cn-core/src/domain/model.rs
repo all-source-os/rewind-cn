@@ -249,9 +249,7 @@ impl EpicProgressProjection {
 
     pub fn apply_event(&mut self, event: &RewindEvent) {
         match event {
-            RewindEvent::EpicCreated {
-                epic_id, title, ..
-            } => {
+            RewindEvent::EpicCreated { epic_id, title, .. } => {
                 self.epics.insert(
                     epic_id.to_string(),
                     EpicProgress {
@@ -266,7 +264,9 @@ impl EpicProgressProjection {
                     epic.is_completed = true;
                 }
             }
-            RewindEvent::TaskCreated { epic_id: Some(eid), .. } => {
+            RewindEvent::TaskCreated {
+                epic_id: Some(eid), ..
+            } => {
                 if let Some(epic) = self.epics.get_mut(eid.as_ref()) {
                     epic.total_tasks += 1;
                 }
@@ -383,10 +383,7 @@ mod tests {
         });
 
         assert_eq!(proj.pending_tasks().len(), 0);
-        assert_eq!(
-            proj.tasks.get("t-1").unwrap().status,
-            TaskStatus::Completed
-        );
+        assert_eq!(proj.tasks.get("t-1").unwrap().status, TaskStatus::Completed);
     }
 
     #[test]

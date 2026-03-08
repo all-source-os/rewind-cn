@@ -14,8 +14,9 @@ use crate::domain::model::{BacklogProjection, EpicProgressProjection};
 use super::command_bridge::*;
 
 /// Central engine that wires together EventStore, CommandBus, and Projections.
-pub struct RewindEngine<B: allframe::cqrs::EventStoreBackend<RewindEvent> = AllSourceBackend<RewindEvent>>
-{
+pub struct RewindEngine<
+    B: allframe::cqrs::EventStoreBackend<RewindEvent> = AllSourceBackend<RewindEvent>,
+> {
     pub event_store: Arc<EventStore<RewindEvent, B>>,
     pub command_bus: CommandBus<RewindEvent>,
     backlog: Arc<RwLock<BacklogProjection>>,
@@ -32,8 +33,7 @@ impl RewindEngine<AllSourceBackend<RewindEvent>> {
             })?;
         }
 
-        let backend =
-            AllSourceBackend::production(data_path).map_err(RewindError::Storage)?;
+        let backend = AllSourceBackend::production(data_path).map_err(RewindError::Storage)?;
         let event_store = Arc::new(EventStore::with_backend(backend));
         let command_bus = CommandBus::new();
 
@@ -238,9 +238,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::commands::{
-        AssignTask, CompleteTask, CreateTask, StartTask,
-    };
+    use crate::application::commands::{AssignTask, CompleteTask, CreateTask, StartTask};
     use crate::domain::ids::AgentId;
     use crate::domain::model::TaskStatus;
 

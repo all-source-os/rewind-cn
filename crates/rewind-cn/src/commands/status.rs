@@ -14,7 +14,10 @@ pub async fn execute(json: bool) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    engine.rebuild_projections().await.map_err(|e| e.to_string())?;
+    engine
+        .rebuild_projections()
+        .await
+        .map_err(|e| e.to_string())?;
 
     let backlog = engine.backlog();
     let backlog = backlog.read().await;
@@ -30,7 +33,14 @@ pub async fn execute(json: bool) -> Result<(), String> {
     } else {
         println!("Tasks: {} total", summary.total_tasks);
 
-        let statuses = ["pending", "assigned", "in-progress", "completed", "failed", "blocked"];
+        let statuses = [
+            "pending",
+            "assigned",
+            "in-progress",
+            "completed",
+            "failed",
+            "blocked",
+        ];
         for status in &statuses {
             let count = summary.by_status.get(*status).unwrap_or(&0);
             if *count > 0 {
@@ -49,11 +59,7 @@ pub async fn execute(json: bool) -> Result<(), String> {
                 };
                 let filled = pct / 10;
                 let empty = 10 - filled;
-                let bar = format!(
-                    "[{}{}]",
-                    "#".repeat(filled),
-                    ".".repeat(empty)
-                );
+                let bar = format!("[{}{}]", "#".repeat(filled), ".".repeat(empty));
                 let status = if epic.is_completed { " (done)" } else { "" };
                 println!(
                     "  {}  {} {}% ({}/{}){status}",

@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rewind - Autonomous Coding Agent Orchestrator</title>
+    <meta name="description" content="Rewind is an autonomous coding agent orchestrator built on CQRS + Event Sourcing. Decompose requirements into tasks, schedule agents, track progress with full auditability.">
+    <meta name="keywords" content="rust, cli, agent orchestrator, cqrs, event sourcing, ai agents, coding automation, developer tools">
+    <link rel="canonical" href="https://all-source-os.github.io/rewind-cn/">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Rewind - Autonomous Coding Agent Orchestrator">
+    <meta property="og:description" content="CQRS + Event Sourcing agent orchestrator. Decompose requirements, schedule AI agents, track progress with immutable events.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://all-source-os.github.io/rewind-cn/">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Rewind - Autonomous Coding Agent Orchestrator">
+    <meta name="twitter:description" content="CQRS + Event Sourcing agent orchestrator. Decompose requirements, schedule AI agents, track progress with immutable events.">
+
+    <style>
+        :root {
+            --primary: #8b5cf6;
+            --primary-dark: #7c3aed;
+            --primary-glow: rgba(139, 92, 246, 0.15);
+            --bg: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --border: #30363d;
+            --green: #3fb950;
+            --blue: #58a6ff;
+            --amber: #d29922;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        a {
+            color: var(--blue);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header */
+        header {
+            border-bottom: 1px solid var(--border);
+            padding: 16px 0;
+            position: sticky;
+            top: 0;
+            background: var(--bg);
+            z-index: 100;
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logo span {
+            color: var(--primary);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 24px;
+            align-items: center;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        /* Hero */
+        .hero {
+            padding: 80px 0 64px;
+            text-align: center;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--primary), var(--blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero .tagline {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            max-width: 640px;
+            margin: 0 auto 32px;
+        }
+
+        .badges {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-bottom: 32px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+
+        .badge-purple { border-color: var(--primary); color: var(--primary); }
+        .badge-green { border-color: var(--green); color: var(--green); }
+        .badge-amber { border-color: var(--amber); color: var(--amber); }
+
+        .install-block {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 28px;
+            max-width: 520px;
+            margin: 0 auto 32px;
+            text-align: left;
+        }
+
+        .install-block code {
+            font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, monospace;
+            font-size: 0.95rem;
+            color: var(--text);
+        }
+
+        .install-block .prompt {
+            color: var(--primary);
+            user-select: none;
+        }
+
+        .install-block .comment {
+            color: var(--text-muted);
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            text-decoration: none;
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--text-muted);
+            text-decoration: none;
+        }
+
+        /* Features */
+        .features {
+            padding: 64px 0;
+        }
+
+        .features h2 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 20px;
+        }
+
+        .feature-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            transition: border-color 0.2s;
+        }
+
+        .feature-card:hover {
+            border-color: var(--primary);
+        }
+
+        .feature-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .feature-card p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .feature-tag {
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .tag-core { background: rgba(139, 92, 246, 0.15); color: var(--primary); }
+        .tag-event { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+        .tag-agent { background: rgba(88, 166, 255, 0.15); color: var(--blue); }
+        .tag-skill { background: rgba(210, 153, 34, 0.15); color: var(--amber); }
+
+        /* Workflow */
+        .workflow {
+            padding: 64px 0;
+        }
+
+        .workflow h2 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+
+        .workflow .subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            margin-bottom: 48px;
+        }
+
+        .workflow-steps {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 32px;
+        }
+
+        .step {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            text-align: center;
+            min-width: 160px;
+            position: relative;
+        }
+
+        .step .cmd {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.9rem;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .step .desc {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .step-arrow {
+            display: flex;
+            align-items: center;
+            color: var(--text-muted);
+            font-size: 1.2rem;
+        }
+
+        /* Architecture */
+        .architecture {
+            padding: 64px 0;
+        }
+
+        .architecture h2 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .arch-diagram {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 700px;
+            margin: 0 auto;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            line-height: 1.8;
+            overflow-x: auto;
+        }
+
+        .arch-diagram .layer {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .arch-diagram .arrow {
+            color: var(--text-muted);
+        }
+
+        .arch-diagram .component {
+            color: var(--green);
+        }
+
+        .arch-diagram .storage {
+            color: var(--amber);
+        }
+
+        /* Stats */
+        .stats {
+            padding: 64px 0;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--primary);
+        }
+
+        .stat-card .label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Commands */
+        .commands {
+            padding: 64px 0;
+        }
+
+        .commands h2 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .cmd-table {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            border-collapse: collapse;
+        }
+
+        .cmd-table th {
+            text-align: left;
+            padding: 12px 16px;
+            border-bottom: 2px solid var(--border);
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .cmd-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+
+        .cmd-table code {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            color: var(--primary);
+            background: var(--bg-tertiary);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        /* Events */
+        .events {
+            padding: 64px 0;
+        }
+
+        .events h2 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+
+        .events .subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            margin-bottom: 48px;
+        }
+
+        .event-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .event-item {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .event-item code {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            color: var(--green);
+        }
+
+        .event-item .source {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Skills */
+        .skills {
+            padding: 64px 0;
+        }
+
+        .skills h2 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+
+        .skills .subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            margin-bottom: 48px;
+        }
+
+        .skill-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .skill-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
+            transition: border-color 0.2s;
+        }
+
+        .skill-card:hover {
+            border-color: var(--primary);
+        }
+
+        .skill-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .skill-card h3 code {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.95rem;
+            color: var(--primary);
+        }
+
+        .skill-card p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+        }
+
+        .skill-card .skill-steps {
+            list-style: none;
+            padding: 0;
+        }
+
+        .skill-card .skill-steps li {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            padding: 3px 0 3px 16px;
+            position: relative;
+        }
+
+        .skill-card .skill-steps li::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 10px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--primary);
+        }
+
+        /* CTA */
+        .cta {
+            padding: 80px 0;
+            text-align: center;
+        }
+
+        .cta h2 {
+            font-size: 2rem;
+            margin-bottom: 16px;
+        }
+
+        .cta p {
+            color: var(--text-muted);
+            margin-bottom: 32px;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 32px 0;
+        }
+
+        .footer-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 24px;
+        }
+
+        .footer-links a {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .footer-copy {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        /* Pipeline */
+        .pipeline {
+            padding: 64px 0;
+        }
+
+        .pipeline h2 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+
+        .pipeline .subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            margin-bottom: 48px;
+        }
+
+        .pipeline-steps {
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .pipeline-step {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+            margin-bottom: 24px;
+        }
+
+        .pipeline-step .step-num {
+            background: var(--primary);
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+
+        .pipeline-step .step-content {
+            flex: 1;
+        }
+
+        .pipeline-step .step-content h4 {
+            font-size: 1rem;
+            margin-bottom: 4px;
+        }
+
+        .pipeline-step .step-content h4 code {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            color: var(--primary);
+            font-size: 0.9rem;
+        }
+
+        .pipeline-step .step-content p {
+            color: var(--text-muted);
+            font-size: 0.88rem;
+        }
+
+        .pipeline-connector {
+            width: 2px;
+            height: 16px;
+            background: var(--border);
+            margin-left: 15px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2.5rem; }
+            .nav-links { display: none; }
+            .workflow-steps { flex-direction: column; align-items: center; }
+            .step-arrow { transform: rotate(90deg); }
+            .footer-content { flex-direction: column; text-align: center; }
+            .skill-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="container">
+            <nav>
+                <a href="https://all-source-os.github.io/rewind-cn/" class="logo" style="text-decoration:none;color:var(--text)">
+                    <span>&#8634;</span> Rewind
+                </a>
+                <div class="nav-links">
+                    <a href="#features">Features</a>
+                    <a href="#workflow">Workflow</a>
+                    <a href="#commands">Commands</a>
+                    <a href="#architecture">Architecture</a>
+                    <a href="#skills">Skills</a>
+                    <a href="https://github.com/all-source-os/rewind-cn">GitHub</a>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="container">
+            <h1>Autonomous Agent Orchestrator</h1>
+            <p class="tagline">
+                Decompose requirements into tasks, schedule AI coding agents, and track progress &mdash; all backed by an append-only event store for full auditability.
+                Built on <a href="https://all-source.xyz">AllSource</a> CQRS + Event Sourcing.
+            </p>
+            <div class="badges">
+                <span class="badge badge-purple">Rust 2024 Edition</span>
+                <span class="badge badge-green">CQRS + Event Sourcing</span>
+                <span class="badge badge-amber">Clean Architecture</span>
+            </div>
+            <div class="install-block">
+                <code>
+                    <span class="comment"># Install from crates.io</span><br>
+                    <span class="prompt">$</span> cargo install rewind-cn<br><br>
+                    <span class="comment"># Initialize a project</span><br>
+                    <span class="prompt">$</span> rewind init<br><br>
+                    <span class="comment"># Plan and execute</span><br>
+                    <span class="prompt">$</span> rewind plan "Add JWT authentication"<br>
+                    <span class="prompt">$</span> rewind run --max-concurrent 3
+                </code>
+            </div>
+            <div class="cta-buttons">
+                <a href="https://github.com/all-source-os/rewind-cn" class="btn btn-primary">View on GitHub</a>
+                <a href="#commands" class="btn btn-secondary">Read the Docs</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features" id="features">
+        <div class="container">
+            <h2>Why Rewind?</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h3>CQRS Engine <span class="feature-tag tag-core">Core</span></h3>
+                    <p>Command-Query Responsibility Segregation separates writes (commands that emit events) from reads (projections that materialize views). Clean, testable, auditable.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Event Sourcing <span class="feature-tag tag-event">Events</span></h3>
+                    <p>Every state change is an immutable event. Full audit trail, time-travel debugging, and reproducible state. Powered by the AllSource embedded event database.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Clean Architecture <span class="feature-tag tag-core">Core</span></h3>
+                    <p>Strict dependency direction: domain (zero deps) &rarr; application (pure logic) &rarr; infrastructure (framework). Easy to test, extend, and reason about.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Agent Workers <span class="feature-tag tag-agent">Agent</span></h3>
+                    <p>Spawn concurrent AI coding agents per task. Each agent gets a focused context window with clear acceptance criteria. First-write-wins prevents conflicts.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Chronis Integration <span class="feature-tag tag-agent">Agent</span></h3>
+                    <p>Uses <a href="https://all-source-os.github.io/all-source/chronis/">Chronis</a> as the task tracker. Chronis owns the backlog, Rewind owns execution. Bridge via <code>cn ready</code>, <code>cn claim</code>, <code>cn done</code>.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>MCP Server <span class="feature-tag tag-agent">Agent</span></h3>
+                    <p>Expose capabilities as MCP tools and resources for IDE integration. Supports optional <code>--toon</code> format for ~50% fewer tokens in agent workflows.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Plan Decomposition <span class="feature-tag tag-core">Core</span></h3>
+                    <p>Turn a PRD or description into an epic with ordered, right-sized tasks. Each task is completable in one agent context window.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Projections <span class="feature-tag tag-event">Events</span></h3>
+                    <p>BacklogProjection and EpicProgressProjection materialize views from the event stream. No mutable database &mdash; state is always derived.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Claude Code Skills <span class="feature-tag tag-skill">Skills</span></h3>
+                    <p>Bundled <code>/rewind-prd</code> and <code>/rewind-beads</code> skills automate the full pipeline: PRD generation &rarr; bead creation &rarr; agent execution.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Workflow -->
+    <section class="workflow" id="workflow">
+        <div class="container">
+            <h2>Workflow</h2>
+            <p class="subtitle">From requirements to shipped code</p>
+            <div class="workflow-steps">
+                <div class="step">
+                    <div class="cmd">rewind plan</div>
+                    <div class="desc">Decompose PRD</div>
+                </div>
+                <div class="step-arrow">&rarr;</div>
+                <div class="step">
+                    <div class="cmd">rewind run</div>
+                    <div class="desc">Schedule agents</div>
+                </div>
+                <div class="step-arrow">&rarr;</div>
+                <div class="step">
+                    <div class="cmd">(agents work)</div>
+                    <div class="desc">Execute tasks</div>
+                </div>
+                <div class="step-arrow">&rarr;</div>
+                <div class="step">
+                    <div class="cmd">rewind status</div>
+                    <div class="desc">Track progress</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Skill Pipeline -->
+    <section class="pipeline" id="pipeline">
+        <div class="container">
+            <h2>Skill Pipeline</h2>
+            <p class="subtitle">End-to-end automation with Claude Code skills</p>
+            <div class="pipeline-steps">
+                <div class="pipeline-step">
+                    <div class="step-num">1</div>
+                    <div class="step-content">
+                        <h4><code>/rewind-prd</code> &mdash; Generate PRD</h4>
+                        <p>Describe a feature. The skill asks clarifying questions, classifies quality gates into epic-level vs. story-level, and outputs a structured PRD with verifiable acceptance criteria.</p>
+                    </div>
+                </div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-step">
+                    <div class="step-num">2</div>
+                    <div class="step-content">
+                        <h4><code>/rewind-beads</code> &mdash; Create Beads</h4>
+                        <p>Convert the PRD to chronis beads. Detects project tooling (Cargo, Taskfile, Makefile), creates an epic with quality gates, child beads for each story, and dependency ordering.</p>
+                    </div>
+                </div>
+                <div class="pipeline-connector"></div>
+                <div class="pipeline-step">
+                    <div class="step-num">3</div>
+                    <div class="step-content">
+                        <h4><code>rewind run --tracker chronis</code> &mdash; Execute</h4>
+                        <p>Rewind picks unblocked beads, spawns agents, tracks progress via events. Agents verify each acceptance criterion, mark items done, and close beads. Epic-level gates run on completion.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Commands -->
+    <section class="commands" id="commands">
+        <div class="container">
+            <h2>Commands</h2>
+            <table class="cmd-table">
+                <thead>
+                    <tr>
+                        <th>Command</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>rewind init</code></td>
+                        <td>Create <code>.rewind/</code> directory with config and event store</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind plan &lt;desc&gt;</code></td>
+                        <td>Generate an execution plan (epic + tasks) from a description</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind plan -f &lt;file&gt;</code></td>
+                        <td>Generate a plan from a PRD markdown file</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind run</code></td>
+                        <td>Execute pending tasks through agent workers</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind run --task &lt;id&gt;</code></td>
+                        <td>Run a single specific task</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind run --max-concurrent &lt;n&gt;</code></td>
+                        <td>Limit parallel agent workers (default: 3)</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind status</code></td>
+                        <td>Display backlog and epic progress</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind status --json</code></td>
+                        <td>Output status as JSON for scripting</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind mcp</code></td>
+                        <td>Start MCP server over stdio for IDE integration</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Architecture -->
+    <section class="architecture" id="architecture">
+        <div class="container">
+            <h2>Architecture</h2>
+            <div class="arch-diagram">
+                <span class="layer">CLI (clap)</span><br>
+                <span class="arrow">&nbsp;&nbsp;init &middot; plan &middot; run &middot; status &middot; mcp</span><br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;|</span><br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;v</span><br>
+                <span class="layer">Application Layer</span> <span class="component">(pure sync functions)</span><br>
+                <span class="arrow">&nbsp;&nbsp;commands &middot; handlers &middot; planning &middot; scheduler</span><br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;|</span><br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;v</span><br>
+                <span class="layer">Domain Layer</span> <span class="component">(zero framework deps)</span><br>
+                <span class="arrow">&nbsp;&nbsp;events &middot; aggregates &middot; projections &middot; ports</span><br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;|</span><br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;v</span><br>
+                <span class="layer">Infrastructure</span> <span class="component">(allframe CQRS)</span><br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;+--> </span><span class="storage">AllSource Event Store</span> (.rewind/data/)<br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;+--> </span><span class="storage">Command Bridge</span> (allframe Command trait)<br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;+--> </span><span class="storage">Agent Workers</span> (task executors)<br>
+                <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;+--> </span><span class="component">MCP Server</span> (JSON-RPC 2.0)
+            </div>
+        </div>
+    </section>
+
+    <!-- Event Types -->
+    <section class="events" id="events">
+        <div class="container">
+            <h2>Event Types</h2>
+            <p class="subtitle">All state is derived from these immutable events</p>
+            <div class="event-grid">
+                <div class="event-item">
+                    <code>rewind.task.created</code>
+                    <span class="source">rewind plan</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.task.assigned</code>
+                    <span class="source">rewind run</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.task.started</code>
+                    <span class="source">agent worker</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.task.completed</code>
+                    <span class="source">agent worker</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.task.failed</code>
+                    <span class="source">agent worker</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.epic.created</code>
+                    <span class="source">rewind plan</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.epic.completed</code>
+                    <span class="source">quality gates</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.session.started</code>
+                    <span class="source">rewind run</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.session.ended</code>
+                    <span class="source">rewind run</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Skills -->
+    <section class="skills" id="skills">
+        <div class="container">
+            <h2>Claude Code Skills</h2>
+            <p class="subtitle">Install the bundled skills for end-to-end automation</p>
+            <div class="skill-grid">
+                <div class="skill-card">
+                    <h3><code>/rewind-prd</code></h3>
+                    <p>Generate structured PRDs optimized for AI agent execution. Asks clarifying questions, classifies quality gates, outputs verifiable acceptance criteria.</p>
+                    <ul class="skill-steps">
+                        <li>Iterative clarifying questions with lettered options</li>
+                        <li>Two-tier quality gates (epic-level vs. story-level)</li>
+                        <li>Type-tagged user stories: [Domain], [Application], [Infrastructure], [CLI]</li>
+                        <li>Verifiable <code>- [ ]</code> acceptance criteria</li>
+                        <li>Wrapped in <code>[PRD]...[/PRD]</code> markers</li>
+                    </ul>
+                </div>
+                <div class="skill-card">
+                    <h3><code>/rewind-beads</code></h3>
+                    <p>Convert PRDs to chronis beads for autonomous execution. Detects project tooling and creates dependency-ordered tasks.</p>
+                    <ul class="skill-steps">
+                        <li>Auto-detects Cargo, Taskfile, Makefile, package.json</li>
+                        <li>Creates epic bead with epic-level quality gates</li>
+                        <li>Child beads per user story with <code>cn create --toon</code></li>
+                        <li>Dependency ordering: domain &rarr; application &rarr; infrastructure &rarr; CLI</li>
+                        <li>Right-sized stories (one agent context window)</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="install-block" style="max-width: 640px; margin-top: 32px;">
+                <code>
+                    <span class="comment"># Install skills from the repo</span><br>
+                    <span class="prompt">$</span> cp -r skills/rewind-prd ~/.claude/skills/<br>
+                    <span class="prompt">$</span> cp -r skills/rewind-beads ~/.claude/skills/<br><br>
+                    <span class="comment"># Then use in Claude Code</span><br>
+                    <span class="prompt">&gt;</span> /rewind-prd Add user authentication with JWT<br>
+                    <span class="prompt">&gt;</span> /rewind-beads (paste the PRD)
+                </code>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="stats">
+        <div class="container">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="value">22+</div>
+                    <div class="label">Tests Passing</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value">3</div>
+                    <div class="label">Architecture Layers</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value">9</div>
+                    <div class="label">Event Types</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value">2</div>
+                    <div class="label">Claude Skills</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta">
+        <div class="container">
+            <h2>Get Started</h2>
+            <p>Created by <a href="https://decebaldobrica.com">Decebal Dobrica</a>. Part of the <a href="https://all-source.xyz">AllSource</a> ecosystem. Orchestrate AI coding agents with full event-sourced auditability.</p>
+            <div class="cta-buttons">
+                <a href="https://github.com/all-source-os/rewind-cn" class="btn btn-primary">GitHub</a>
+                <a href="#skills" class="btn btn-secondary">Install Skills</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-links">
+                    <a href="https://all-source.xyz">AllSource</a>
+                    <a href="https://all-source-os.github.io/all-source/chronis/">Chronis</a>
+                    <a href="https://github.com/all-source-os/rewind-cn">GitHub</a>
+                </div>
+                <div class="footer-copy">
+                    &copy; 2026 <a href="https://decebaldobrica.com">Decebal Dobrica</a>. Rewind is open source.
+                </div>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

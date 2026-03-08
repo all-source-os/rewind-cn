@@ -1,8 +1,6 @@
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use crate::application::commands::{CreateEpic, CreateTask};
 use crate::application::planning::passthrough_plan;
 use crate::application::scheduler::pick_runnable_tasks;
@@ -11,6 +9,8 @@ use crate::domain::error::RewindError;
 use crate::domain::events::RewindEvent;
 use crate::infrastructure::agent::AgentWorker;
 use crate::infrastructure::toon;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use super::engine::RewindEngine;
 
@@ -141,7 +141,9 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
             "tools/call" => self.handle_tools_call(req.id, req.params).await,
             "resources/list" => self.handle_resources_list(req.id),
             "resources/read" => self.handle_resources_read(req.id, req.params).await,
-            _ => JsonRpcResponse::error(req.id, -32601, format!("Method not found: {}", req.method)),
+            _ => {
+                JsonRpcResponse::error(req.id, -32601, format!("Method not found: {}", req.method))
+            }
         }
     }
 
@@ -248,10 +250,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
     }
 
     async fn handle_tools_call(&self, id: Option<Value>, params: Value) -> JsonRpcResponse {
-        let tool_name = params
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
         match tool_name {
@@ -296,7 +295,11 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
         let description = match args.get("description").and_then(|v| v.as_str()) {
             Some(d) => d,
             None => {
-                return JsonRpcResponse::error(id, -32602, "Missing required parameter: description")
+                return JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    "Missing required parameter: description",
+                )
             }
         };
 
@@ -403,7 +406,10 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
             return JsonRpcResponse::error(id, -32000, e.to_string());
         }
 
-        let status_filter = args.get("status").and_then(|v| v.as_str()).map(String::from);
+        let status_filter = args
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let backlog = self.engine.backlog();
         let backlog = backlog.read().await;

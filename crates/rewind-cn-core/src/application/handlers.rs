@@ -8,7 +8,10 @@ use super::commands::*;
 
 pub fn handle_create_task(cmd: CreateTask) -> Result<Vec<RewindEvent>, RewindError> {
     if cmd.title.trim().is_empty() {
-        return Err(RewindError::validation("title", "Task title cannot be empty"));
+        return Err(RewindError::validation(
+            "title",
+            "Task title cannot be empty",
+        ));
     }
     Ok(vec![RewindEvent::TaskCreated {
         task_id: TaskId::generate(),

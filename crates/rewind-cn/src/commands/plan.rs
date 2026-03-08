@@ -92,7 +92,10 @@ fn resolve_input(description: Option<String>, file: Option<PathBuf>) -> Result<S
         .map_err(|e| format!("Failed to read stdin: {e}"))?;
 
     if input.trim().is_empty() {
-        return Err("No input provided. Usage: rewind plan \"description\" or rewind plan -f file.md".into());
+        return Err(
+            "No input provided. Usage: rewind plan \"description\" or rewind plan -f file.md"
+                .into(),
+        );
     }
 
     Ok(input)

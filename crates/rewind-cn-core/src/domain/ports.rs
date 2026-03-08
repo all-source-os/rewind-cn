@@ -6,7 +6,8 @@ use super::events::RewindEvent;
 /// Port for persisting and retrieving events.
 #[async_trait]
 pub trait EventRepository: Send + Sync {
-    async fn append(&self, aggregate_id: &str, events: Vec<RewindEvent>) -> Result<(), RewindError>;
+    async fn append(&self, aggregate_id: &str, events: Vec<RewindEvent>)
+        -> Result<(), RewindError>;
     async fn get_all_events(&self) -> Result<Vec<RewindEvent>, RewindError>;
 }
 
