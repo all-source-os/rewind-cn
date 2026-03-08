@@ -1,6 +1,6 @@
 # US-004-02: Task scheduler — pick next runnable tasks
 
-**Parent:** US-004 (`ralph run`)
+**Parent:** US-004 (`rewind run`)
 **Size:** S
 **Depends on:** US-004-01
 
@@ -27,8 +27,8 @@ Implement a scheduler that selects the next batch of runnable tasks from the bac
    - Returned in creation order
 
 ## Files touched
-- `crates/ralph-core/src/application/scheduler.rs` (create)
-- `crates/ralph-core/src/application/mod.rs` (modify)
+- `crates/rewind-cn-core/src/application/scheduler.rs` (create)
+- `crates/rewind-cn-core/src/application/mod.rs` (modify)
 
 ## Done when
 - All scheduler tests pass

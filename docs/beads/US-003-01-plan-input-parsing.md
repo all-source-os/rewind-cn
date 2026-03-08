@@ -1,6 +1,6 @@
 # US-003-01: Plan input parsing and CLI args
 
-**Parent:** US-003 (`ralph plan`)
+**Parent:** US-003 (`rewind plan`)
 **Size:** S
 **Depends on:** —
 
@@ -31,11 +31,11 @@ Accept plan input from positional arg, `-f` file, or stdin. Parse into a raw str
 3. Unit test: resolve_input with each source
 
 ## Files touched
-- `crates/ralph-cli/src/main.rs` (modify)
-- `crates/ralph-cli/src/commands/plan.rs` (rewrite)
+- `crates/rewind-cn/src/main.rs` (modify)
+- `crates/rewind-cn/src/commands/plan.rs` (rewrite)
 
 ## Done when
-- `ralph plan "do the thing"` captures input
-- `ralph plan -f todo.md` reads file
-- `echo "do it" | ralph plan` reads from stdin
+- `rewind plan "do the thing"` captures input
+- `rewind plan -f todo.md` reads file
+- `echo "do it" | rewind plan` reads from stdin
 - All three paths tested

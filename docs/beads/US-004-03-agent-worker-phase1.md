@@ -1,6 +1,6 @@
 # US-004-03: Agent worker — Phase 1 mock execution
 
-**Parent:** US-004 (`ralph run`)
+**Parent:** US-004 (`rewind run`)
 **Size:** M
 **Depends on:** US-004-01, US-004-02
 
@@ -18,12 +18,12 @@ Implement the agent worker that picks a task, transitions it through the lifecyc
        pub fn new() -> Self; // generates AgentId
 
        /// Execute a single task. Phase 1: immediately completes.
-       pub async fn execute_task<B: EventStoreBackend<RalphEvent>>(
+       pub async fn execute_task<B: EventStoreBackend<RewindEvent>>(
            &self,
            task_id: TaskId,
            task_title: &str,
-           engine: &RalphEngine<B>,
-       ) -> Result<(), RalphError>;
+           engine: &RewindEngine<B>,
+       ) -> Result<(), RewindError>;
    }
    ```
 2. `execute_task` flow:
@@ -35,8 +35,8 @@ Implement the agent worker that picks a task, transitions it through the lifecyc
 3. Test: create task → agent executes → verify task is Completed in projections
 
 ## Files touched
-- `crates/ralph-core/src/infrastructure/agent.rs` (create)
-- `crates/ralph-core/src/infrastructure/mod.rs` (modify)
+- `crates/rewind-cn-core/src/infrastructure/agent.rs` (create)
+- `crates/rewind-cn-core/src/infrastructure/mod.rs` (modify)
 
 ## Done when
 - Agent worker test passes: task goes Pending → Assigned → InProgress → Completed

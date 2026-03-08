@@ -1,6 +1,6 @@
 # US-002-01: Display impl and status formatting helpers
 
-**Parent:** US-002 (`ralph status`)
+**Parent:** US-002 (`rewind status`)
 **Size:** S
 **Depends on:** —
 
@@ -34,9 +34,9 @@ Add `Display` for `TaskStatus` and `EpicStatus`, plus a `StatusSummary` struct t
 5. Unit test: given a backlog with mixed statuses, `build_summary` returns correct counts
 
 ## Files touched
-- `crates/ralph-core/src/domain/model.rs` (modify)
-- `crates/ralph-core/src/application/status.rs` (create)
-- `crates/ralph-core/src/application/mod.rs` (modify)
+- `crates/rewind-cn-core/src/domain/model.rs` (modify)
+- `crates/rewind-cn-core/src/application/status.rs` (create)
+- `crates/rewind-cn-core/src/application/mod.rs` (modify)
 
 ## Done when
 - `cargo test` passes with new summary tests

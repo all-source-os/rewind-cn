@@ -1,15 +1,15 @@
 # US-003-03: Persist plan to event store and print output
 
-**Parent:** US-003 (`ralph plan`)
+**Parent:** US-003 (`rewind plan`)
 **Size:** M
 **Depends on:** US-003-01, US-003-02, US-002-02
 
 ## Goal
-Wire the full `ralph plan` command: resolve input → generate plan → dispatch CreateEpic + CreateTask commands → print result.
+Wire the full `rewind plan` command: resolve input → generate plan → dispatch CreateEpic + CreateTask commands → print result.
 
 ## Tasks
 1. In `commands/plan.rs`, implement `execute()`:
-   - Check `.ralph/` exists
+   - Check `.rewind/` exists
    - Resolve input (US-003-01)
    - Generate plan via `passthrough_plan()` (US-003-02)
    - Load engine
@@ -29,9 +29,9 @@ Wire the full `ralph plan` command: resolve input → generate plan → dispatch
 2. Integration test: plan → status shows the created epic and tasks
 
 ## Files touched
-- `crates/ralph-cli/src/commands/plan.rs` (modify)
+- `crates/rewind-cn/src/commands/plan.rs` (modify)
 
 ## Done when
-- `ralph init && ralph plan "Fix login" && ralph status` shows 1 epic, 1 task
-- `ralph plan --dry-run "Fix login" && ralph status` shows 0 tasks
+- `rewind init && rewind plan "Fix login" && rewind status` shows 1 epic, 1 task
+- `rewind plan --dry-run "Fix login" && rewind status` shows 0 tasks
 - Events persisted correctly (verified via status)

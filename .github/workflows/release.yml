@@ -1,0 +1,226 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 1.0.0)"
+        required: true
+        type: string
+      prerelease:
+        description: "Is this a prerelease?"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  # ============================================================================
+  # Validate Release
+  # ============================================================================
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            IS_PRERELEASE="${{ github.event.inputs.prerelease }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            if [[ "$VERSION" =~ (alpha|beta|rc) ]]; then
+              IS_PRERELEASE="true"
+            else
+              IS_PRERELEASE="false"
+            fi
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION (prerelease: $IS_PRERELEASE)"
+
+      - name: Validate semver
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "Invalid semantic version: $VERSION"
+            exit 1
+          fi
+
+  # ============================================================================
+  # Quality Gates
+  # ============================================================================
+  quality:
+    name: Quality Gates
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --all
+
+  # ============================================================================
+  # Build Rust Binaries
+  # ============================================================================
+  build-binaries:
+    name: Build (${{ matrix.artifact }})
+    needs: [validate, quality]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: rewind-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            artifact: rewind-linux-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: rewind-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: rewind-macos-aarch64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: contains(matrix.target, 'aarch64') && contains(matrix.os, 'ubuntu')
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        run: |
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
+            cross build --release --locked --target ${{ matrix.target }} -p rewind-cn --bin rewind
+          else
+            cargo build --release --locked --target ${{ matrix.target }} -p rewind-cn --bin rewind
+          fi
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/rewind dist/${{ matrix.artifact }}
+          chmod +x dist/${{ matrix.artifact }}
+
+      - name: Create tarball
+        run: |
+          cd dist
+          tar -czvf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+
+  # ============================================================================
+  # Create GitHub Release
+  # ============================================================================
+  create-release:
+    name: Create Release
+    needs: [validate, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Ensure artifacts directory exists
+        run: mkdir -p artifacts
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log --pretty=format:"- %s (%h)" "$PREV_TAG..HEAD")
+          else
+            CHANGES=$(git log --pretty=format:"- %s (%h)" HEAD~20..HEAD)
+          fi
+
+          echo "$CHANGES" > changelog.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.validate.outputs.version }}
+          name: Rewind v${{ needs.validate.outputs.version }}
+          body_path: changelog.txt
+          prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+          fail_on_unmatched_files: false
+
+      - name: Generate release summary
+        run: |
+          {
+            echo "## Release v${{ needs.validate.outputs.version }}"
+            echo ""
+            echo "### Binary Artifacts"
+            echo "| Platform | Architecture | Download |"
+            echo "|----------|-------------|----------|"
+            echo "| Linux | x86_64 | rewind-linux-x86_64.tar.gz |"
+            echo "| Linux | aarch64 | rewind-linux-aarch64.tar.gz |"
+            echo "| macOS | x86_64 | rewind-macos-x86_64.tar.gz |"
+            echo "| macOS | aarch64 | rewind-macos-aarch64.tar.gz |"
+          } >> "$GITHUB_STEP_SUMMARY"

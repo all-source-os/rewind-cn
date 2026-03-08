@@ -1,0 +1,12 @@
+# Rewind configuration
+
+project_name = "my-project"
+
+[llm]
+# provider = "anthropic"
+# model = "claude-sonnet-4-20250514"
+# api_key_env = "ANTHROPIC_API_KEY"
+
+[agents]
+max_concurrent = 3
+timeout_secs = 300

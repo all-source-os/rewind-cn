@@ -1,6 +1,6 @@
 # US-004-01: Add StartTask, StartSession, EndSession commands
 
-**Parent:** US-004 (`ralph run`)
+**Parent:** US-004 (`rewind run`)
 **Size:** S
 **Depends on:** —
 
@@ -29,10 +29,10 @@ Add the missing command structs, handlers, and engine methods needed to drive ta
    - Engine roundtrip: create → assign → start → complete
 
 ## Files touched
-- `crates/ralph-core/src/application/commands.rs` (modify)
-- `crates/ralph-core/src/application/handlers.rs` (modify)
-- `crates/ralph-core/src/infrastructure/command_bridge.rs` (modify)
-- `crates/ralph-core/src/infrastructure/engine.rs` (modify)
+- `crates/rewind-cn-core/src/application/commands.rs` (modify)
+- `crates/rewind-cn-core/src/application/handlers.rs` (modify)
+- `crates/rewind-cn-core/src/infrastructure/command_bridge.rs` (modify)
+- `crates/rewind-cn-core/src/infrastructure/engine.rs` (modify)
 
 ## Done when
 - All new handler tests pass

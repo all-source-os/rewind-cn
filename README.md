@@ -1,13 +1,13 @@
-# ralph
+# rewind
 
 **Autonomous coding agent orchestrator built on CQRS + Event Sourcing.**
 
-Ralph decomposes product requirements into tasks, schedules them across agent workers, and tracks progress — all backed by an append-only event store for full auditability.
+Rewind decomposes product requirements into tasks, schedules them across agent workers, and tracks progress — all backed by an append-only event store for full auditability.
 
 ```
-ralph plan "Add user authentication with JWT"
-ralph run --max-concurrent 3
-ralph status
+rewind plan "Add user authentication with JWT"
+rewind run --max-concurrent 3
+rewind status
 ```
 
 ## Architecture
@@ -36,34 +36,34 @@ Clean architecture with strict dependency direction — domain knows nothing abo
 
 | Crate | Role |
 |---|---|
-| `ralph-cli` | Binary — CLI interface and command orchestration |
-| `ralph-core` | Library — domain model, CQRS engine, event sourcing |
+| `rewind-cn` | Binary — CLI interface and command orchestration |
+| `rewind-cn-core` | Library — domain model, CQRS engine, event sourcing |
 
 ## Getting Started
 
 ```bash
-# Build
-cargo build --release
+# Install from crates.io
+cargo install rewind-cn
 
 # Initialize a project
-ralph init
+rewind init
 
 # Create a plan from a description
-ralph plan "Build a REST API with CRUD endpoints for users"
+rewind plan "Build a REST API with CRUD endpoints for users"
 
 # Or from a file
-ralph plan -f prd.md
+rewind plan -f prd.md
 
 # Execute pending tasks
-ralph run
+rewind run
 
 # Check progress
-ralph status
+rewind status
 ```
 
 ### Configuration
 
-After `ralph init`, edit `.ralph/ralph.toml`:
+After `rewind init`, edit `.rewind/rewind.toml`:
 
 ```toml
 project_name = "my-project"
@@ -80,11 +80,11 @@ timeout_secs = 300
 
 ## Commands
 
-### `ralph init`
+### `rewind init`
 
-Creates the `.ralph/` directory with config and event store. Run this once per project.
+Creates the `.rewind/` directory with config and event store. Run this once per project.
 
-### `ralph plan <description>`
+### `rewind plan <description>`
 
 Generates an execution plan (epic + tasks) from a description or PRD file.
 
@@ -93,7 +93,7 @@ Generates an execution plan (epic + tasks) from a description or PRD file.
 | `-f, --file <path>` | Read description from a file |
 | `--dry-run` | Print the plan without persisting |
 
-### `ralph run`
+### `rewind run`
 
 Picks up pending tasks and executes them through agent workers.
 
@@ -103,7 +103,7 @@ Picks up pending tasks and executes them through agent workers.
 | `--dry-run` | Show what would execute without running |
 | `--max-concurrent <n>` | Maximum parallel workers (default: 3) |
 
-### `ralph status`
+### `rewind status`
 
 Displays the current backlog and epic progress.
 
@@ -111,9 +111,9 @@ Displays the current backlog and epic progress.
 |---|---|
 | `--json` | Output as JSON for scripting |
 
-### `ralph mcp`
+### `rewind mcp`
 
-Starts an [MCP](https://modelcontextprotocol.io) server over stdio for IDE integration, exposing ralph's capabilities as tools and resources.
+Starts an [MCP](https://modelcontextprotocol.io) server over stdio for IDE integration, exposing rewind's capabilities as tools and resources.
 
 ## Event Sourcing Model
 
@@ -142,7 +142,7 @@ State is rebuilt by replaying events through projections — no mutable database
 cargo test
 
 # Run with debug logging
-RUST_LOG=debug ralph status
+RUST_LOG=debug rewind status
 
 # Run a specific test
 cargo test test_engine_roundtrip
@@ -151,12 +151,12 @@ cargo test test_engine_roundtrip
 ### Project Structure
 
 ```
-crates/ralph-core/src/
+crates/rewind-cn-core/src/
 ├── domain/            # Pure domain — no framework dependencies
 │   ├── ids.rs         # TaskId, EpicId, SessionId, AgentId
-│   ├── events.rs      # RalphEvent enum (single event stream)
+│   ├── events.rs      # RewindEvent enum (single event stream)
 │   ├── model.rs       # Aggregates, projections, read models
-│   ├── error.rs       # RalphError (thiserror)
+│   ├── error.rs       # RewindError (thiserror)
 │   └── ports.rs       # Trait abstractions
 ├── application/       # Use cases — pure sync functions
 │   ├── commands.rs    # Command structs
@@ -165,7 +165,7 @@ crates/ralph-core/src/
 │   ├── scheduler.rs   # FIFO task scheduler
 │   └── status.rs      # Status summary builder
 └── infrastructure/    # Framework integration
-    ├── engine.rs      # RalphEngine<B> composition root
+    ├── engine.rs      # RewindEngine<B> composition root
     ├── adapters.rs    # allframe Aggregate/Projection impls
     ├── command_bridge.rs  # Command trait adapters
     ├── agent.rs       # AgentWorker task executor

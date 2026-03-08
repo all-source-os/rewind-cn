@@ -1,6 +1,6 @@
 # US-005-01: MCP server scaffold and stdio transport
 
-**Parent:** US-005 (`ralph mcp`)
+**Parent:** US-005 (`rewind mcp`)
 **Size:** M
 **Depends on:** US-002-02
 
@@ -10,16 +10,16 @@ Set up the MCP server skeleton with JSON-RPC 2.0 over stdio, handling initialize
 ## Tasks
 1. Evaluate and add MCP dependency:
    - Check if `rmcp` crate is suitable, otherwise use raw JSON-RPC over stdio
-   - Add dependency to `ralph-core/Cargo.toml`
+   - Add dependency to `rewind-cn-core/Cargo.toml`
 2. Create `infrastructure/mcp_server.rs`:
    ```rust
-   pub struct RalphMcpServer<B: EventStoreBackend<RalphEvent>> {
-       engine: Arc<RalphEngine<B>>,
+   pub struct RewindMcpServer<B: EventStoreBackend<RewindEvent>> {
+       engine: Arc<RewindEngine<B>>,
    }
 
-   impl RalphMcpServer {
-       pub fn new(engine: Arc<RalphEngine<B>>) -> Self;
-       pub async fn run(&self) -> Result<(), RalphError>; // stdio loop
+   impl RewindMcpServer {
+       pub fn new(engine: Arc<RewindEngine<B>>) -> Self;
+       pub async fn run(&self) -> Result<(), RewindError>; // stdio loop
    }
    ```
 3. Implement JSON-RPC message loop:
@@ -28,16 +28,16 @@ Set up the MCP server skeleton with JSON-RPC 2.0 over stdio, handling initialize
    - Return `ServerCapabilities` with tools and resources lists
    - Write JSON-RPC response to stdout
 4. Implement `commands/mcp.rs`:
-   - Load engine from `.ralph/data/`
-   - Create `RalphMcpServer` and call `run()`
+   - Load engine from `.rewind/data/`
+   - Create `RewindMcpServer` and call `run()`
 5. Test: send `initialize` request via stdin mock, verify response has correct capabilities
 
 ## Files touched
-- `crates/ralph-core/Cargo.toml` (modify — add MCP dep)
-- `crates/ralph-core/src/infrastructure/mcp_server.rs` (create)
-- `crates/ralph-core/src/infrastructure/mod.rs` (modify)
-- `crates/ralph-cli/src/commands/mcp.rs` (rewrite)
+- `crates/rewind-cn-core/Cargo.toml` (modify — add MCP dep)
+- `crates/rewind-cn-core/src/infrastructure/mcp_server.rs` (create)
+- `crates/rewind-cn-core/src/infrastructure/mod.rs` (modify)
+- `crates/rewind-cn/src/commands/mcp.rs` (rewrite)
 
 ## Done when
 - MCP server starts, handles initialize handshake, and shuts down cleanly
-- `echo '{"jsonrpc":"2.0","id":1,"method":"initialize",...}' | ralph mcp` returns valid response
+- `echo '{"jsonrpc":"2.0","id":1,"method":"initialize",...}' | rewind mcp` returns valid response

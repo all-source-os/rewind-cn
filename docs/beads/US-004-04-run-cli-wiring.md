@@ -1,11 +1,11 @@
-# US-004-04: Wire `ralph run` CLI command
+# US-004-04: Wire `rewind run` CLI command
 
-**Parent:** US-004 (`ralph run`)
+**Parent:** US-004 (`rewind run`)
 **Size:** M
 **Depends on:** US-004-01, US-004-02, US-004-03, US-003-03
 
 ## Goal
-Implement the `ralph run` command end-to-end: load engine, schedule tasks, spawn workers, print progress.
+Implement the `rewind run` command end-to-end: load engine, schedule tasks, spawn workers, print progress.
 
 ## Tasks
 1. Update `Commands::Run` in `main.rs` with clap args:
@@ -20,7 +20,7 @@ Implement the `ralph run` command end-to-end: load engine, schedule tasks, spawn
    }
    ```
 2. Implement `commands/run.rs`:
-   - Check `.ralph/` exists
+   - Check `.rewind/` exists
    - Load engine, rebuild projections
    - `engine.start_session()` → capture session_id
    - Determine tasks to run:
@@ -45,11 +45,11 @@ Implement the `ralph run` command end-to-end: load engine, schedule tasks, spawn
    - On timeout: emit `TaskFailed { reason: "timeout" }`
 
 ## Files touched
-- `crates/ralph-cli/src/main.rs` (modify)
-- `crates/ralph-cli/src/commands/run.rs` (rewrite)
+- `crates/rewind-cn/src/main.rs` (modify)
+- `crates/rewind-cn/src/commands/run.rs` (rewrite)
 
 ## Done when
-- `ralph init && ralph plan "Fix bug" && ralph run` completes successfully
-- `ralph status` after run shows task as Completed
-- `ralph run --dry-run` lists tasks without executing
-- `ralph run` with no pending tasks prints "No pending tasks to run"
+- `rewind init && rewind plan "Fix bug" && rewind run` completes successfully
+- `rewind status` after run shows task as Completed
+- `rewind run --dry-run` lists tasks without executing
+- `rewind run` with no pending tasks prints "No pending tasks to run"

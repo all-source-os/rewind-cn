@@ -2,11 +2,11 @@
 
 ## Overview
 
-Implement the four stub CLI commands (`plan`, `run`, `status`, `mcp`) to make ralph a functional autonomous coding agent orchestrator. Each command builds on the CQRS engine and clean architecture already in place.
+Implement the four stub CLI commands (`plan`, `run`, `status`, `mcp`) to make rewind a functional autonomous coding agent orchestrator. Each command builds on the CQRS engine and clean architecture already in place.
 
 ---
 
-## US-002: `ralph status` — Project Status Dashboard
+## US-002: `rewind status` — Project Status Dashboard
 
 ### Priority: P0 (prerequisite for validating all other commands)
 
@@ -14,26 +14,26 @@ Implement the four stub CLI commands (`plan`, `run`, `status`, `mcp`) to make ra
 Display the current project backlog, epic progress, and agent activity by reading from the engine's projections.
 
 ### Acceptance Criteria
-1. Loads engine from `.ralph/data/`, rebuilds projections from event store
+1. Loads engine from `.rewind/data/`, rebuilds projections from event store
 2. Prints a summary table:
    - Total tasks, by status (pending / assigned / in-progress / completed / failed / blocked)
    - Epic progress bars (completed_tasks / total_tasks per epic)
 3. With `--json` flag, outputs the same data as JSON to stdout (for scripting / MCP consumption)
-4. Exits with error if `.ralph/` doesn't exist (prompts user to run `ralph init`)
+4. Exits with error if `.rewind/` doesn't exist (prompts user to run `rewind init`)
 
 ### CLI Interface
 ```
-ralph status [--json]
+rewind status [--json]
 ```
 
 ### Implementation Notes
-- Wire up `RalphEngine::load()` → `rebuild_projections()` → read `backlog()` and `epic_progress()`
+- Wire up `RewindEngine::load()` → `rebuild_projections()` → read `backlog()` and `epic_progress()`
 - Add `Display` impl for `TaskStatus` (or a format helper)
 - No new domain events or commands needed — read-only operation
 
 ---
 
-## US-003: `ralph plan` — Generate Execution Plan
+## US-003: `rewind plan` — Generate Execution Plan
 
 ### Priority: P0
 
@@ -42,17 +42,17 @@ Accept a task description (from argument, stdin, or file), decompose it into an 
 
 ### Acceptance Criteria
 1. Accepts input via:
-   - `ralph plan "Build user authentication"` (positional arg)
-   - `ralph plan -f prd.md` (file input)
-   - `echo "..." | ralph plan` (stdin, when no arg or `-f`)
+   - `rewind plan "Build user authentication"` (positional arg)
+   - `rewind plan -f prd.md` (file input)
+   - `echo "..." | rewind plan` (stdin, when no arg or `-f`)
 2. **Phase 1 (no LLM):** Simple parsing — creates one epic with a single task matching the input text. This makes the pipeline testable end-to-end without an LLM dependency.
-3. **Phase 2 (LLM decomposition):** When `llm.provider` is configured in `ralph.toml`, sends the input to the LLM with a system prompt that returns structured JSON: `{ epic_title, epic_description, tasks: [{ title, description }] }`. Parses the response and emits `EpicCreated` + N × `TaskCreated` events.
+3. **Phase 2 (LLM decomposition):** When `llm.provider` is configured in `rewind.toml`, sends the input to the LLM with a system prompt that returns structured JSON: `{ epic_title, epic_description, tasks: [{ title, description }] }`. Parses the response and emits `EpicCreated` + N × `TaskCreated` events.
 4. Prints the generated plan to stdout (epic title, numbered task list)
-5. Events are persisted — `ralph status` reflects the new plan immediately
+5. Events are persisted — `rewind status` reflects the new plan immediately
 
 ### CLI Interface
 ```
-ralph plan [DESCRIPTION] [-f <file>] [--dry-run]
+rewind plan [DESCRIPTION] [-f <file>] [--dry-run]
 ```
 - `--dry-run`: print the plan but don't persist events
 
@@ -70,15 +70,15 @@ ralph plan [DESCRIPTION] [-f <file>] [--dry-run]
   ```
 
 ### LLM Integration (Phase 2)
-- New crate or module: `ralph-core/src/infrastructure/llm.rs`
-- Trait: `trait PlanGenerator { async fn decompose(&self, input: &str) -> Result<Plan, RalphError>; }`
+- New crate or module: `rewind-cn-core/src/infrastructure/llm.rs`
+- Trait: `trait PlanGenerator { async fn decompose(&self, input: &str) -> Result<Plan, RewindError>; }`
 - Implementations: `LlmPlanGenerator` (calls API), `PassthroughPlanGenerator` (Phase 1 fallback)
-- Read provider/model/api_key_env from `RalphConfig`
+- Read provider/model/api_key_env from `RewindConfig`
 - Support `anthropic` provider initially (Claude API via `reqwest`)
 
 ---
 
-## US-004: `ralph run` — Execute Plan with Agent Workers
+## US-004: `rewind run` — Execute Plan with Agent Workers
 
 ### Priority: P1
 
@@ -104,7 +104,7 @@ Pick up pending tasks from the backlog, assign them to agent workers, execute th
 
 ### CLI Interface
 ```
-ralph run [--task <task_id>] [--dry-run] [--max-concurrent <n>]
+rewind run [--task <task_id>] [--dry-run] [--max-concurrent <n>]
 ```
 
 ### New Domain Surface
@@ -113,11 +113,11 @@ ralph run [--task <task_id>] [--dry-run] [--max-concurrent <n>]
 - New engine methods: `start_task()`, `start_session()`, `end_session()`
 
 ### Agent Worker Architecture
-- `ralph-core/src/infrastructure/agent.rs`:
+- `rewind-cn-core/src/infrastructure/agent.rs`:
   ```rust
   pub struct AgentWorker { agent_id: AgentId, config: AgentsConfig }
   impl AgentWorker {
-      async fn execute_task(&self, task: &TaskView, engine: &RalphEngine<B>) -> Result<(), RalphError>;
+      async fn execute_task(&self, task: &TaskView, engine: &RewindEngine<B>) -> Result<(), RewindError>;
   }
   ```
 - Worker pool: `tokio::JoinSet` with semaphore for concurrency control
@@ -131,31 +131,31 @@ ralph run [--task <task_id>] [--dry-run] [--max-concurrent <n>]
 
 ---
 
-## US-005: `ralph mcp` — MCP Server for IDE Integration
+## US-005: `rewind mcp` — MCP Server for IDE Integration
 
 ### Priority: P2
 
 ### Description
-Start a Model Context Protocol (MCP) server that exposes ralph's CQRS surface as tools, enabling IDE integrations (VS Code, Claude Code, etc.) to interact with the orchestrator.
+Start a Model Context Protocol (MCP) server that exposes rewind's CQRS surface as tools, enabling IDE integrations (VS Code, Claude Code, etc.) to interact with the orchestrator.
 
 ### Acceptance Criteria
 1. Starts an MCP server on stdio transport (standard for CLI-based MCP servers)
 2. Exposes the following tools:
-   - `ralph_status` — returns backlog + epic progress as JSON
-   - `ralph_plan` — accepts description, creates epic + tasks, returns plan
-   - `ralph_run` — triggers execution, returns session summary
-   - `ralph_task_list` — returns all tasks with filters (status, epic_id)
-   - `ralph_task_get` — returns a single task's full details
+   - `rewind_status` — returns backlog + epic progress as JSON
+   - `rewind_plan` — accepts description, creates epic + tasks, returns plan
+   - `rewind_run` — triggers execution, returns session summary
+   - `rewind_task_list` — returns all tasks with filters (status, epic_id)
+   - `rewind_task_get` — returns a single task's full details
 3. Exposes resources:
-   - `ralph://backlog` — live backlog state
-   - `ralph://epics` — epic progress state
-   - `ralph://config` — current ralph.toml config
+   - `rewind://backlog` — live backlog state
+   - `rewind://epics` — epic progress state
+   - `rewind://config` — current rewind.toml config
 4. Server runs until stdin closes (standard MCP lifecycle)
 5. All tool calls go through the same engine/command path as CLI commands
 
 ### CLI Interface
 ```
-ralph mcp
+rewind mcp
 ```
 No flags — MCP servers are configured by the client (Claude Code, VS Code extension, etc.).
 
@@ -163,15 +163,15 @@ No flags — MCP servers are configured by the client (Claude Code, VS Code exte
 - Use `allframe-mcp` if available, otherwise hand-roll with `serde_json` over stdio
 - MCP protocol: JSON-RPC 2.0 over stdin/stdout
 - Consider `rmcp` crate (Rust MCP SDK) or raw implementation
-- Each tool handler reuses the same `RalphEngine` instance
-- `ralph-core/src/mcp.rs` becomes the tool/resource registration point
+- Each tool handler reuses the same `RewindEngine` instance
+- `rewind-cn-core/src/mcp.rs` becomes the tool/resource registration point
 
 ### MCP Server Configuration (for clients)
 ```json
 {
   "mcpServers": {
-    "ralph": {
-      "command": "ralph",
+    "rewind": {
+      "command": "rewind",
       "args": ["mcp"],
       "cwd": "/path/to/project"
     }

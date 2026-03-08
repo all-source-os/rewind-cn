@@ -1,6 +1,6 @@
 # US-003-02: Passthrough plan generator (Phase 1)
 
-**Parent:** US-003 (`ralph plan`)
+**Parent:** US-003 (`rewind plan`)
 **Size:** S
 **Depends on:** US-003-01
 
@@ -31,8 +31,8 @@ Implement the Phase 1 plan generator that creates one epic with one task from th
 3. Unit tests: single-line input, multi-line input, long title truncation
 
 ## Files touched
-- `crates/ralph-core/src/application/planning.rs` (create)
-- `crates/ralph-core/src/application/mod.rs` (modify)
+- `crates/rewind-cn-core/src/application/planning.rs` (create)
+- `crates/rewind-cn-core/src/application/mod.rs` (modify)
 
 ## Done when
 - `passthrough_plan("Build auth\nNeeds OAuth + JWT")` returns epic with title "Build auth" and 1 task
