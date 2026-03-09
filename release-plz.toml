@@ -13,11 +13,6 @@ changelog_config = "cliff.toml"
 [[package]]
 name = "rewind-cn-core"
 changelog_path = "CHANGELOG.md"
-# Private crate — not published to crates.io
-publish = false
 
 [[package]]
 name = "rewind-cn"
-# Binary crate — skip crates.io publish
-release = false
-publish = false

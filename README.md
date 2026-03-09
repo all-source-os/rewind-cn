@@ -42,8 +42,8 @@ Clean architecture with strict dependency direction — domain knows nothing abo
 ## Getting Started
 
 ```bash
-# Install from source
-cargo install --git https://github.com/all-source-os/rewind-cn rewind-cn
+# Install from crates.io
+cargo install rewind-cn
 
 # Initialize a project
 rewind init
