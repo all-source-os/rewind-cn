@@ -194,7 +194,7 @@ jobs:
           if [ -n "$PREV_TAG" ]; then
             CHANGES=$(git log --pretty=format:"- %s (%h)" "$PREV_TAG..HEAD")
           else
-            CHANGES=$(git log --pretty=format:"- %s (%h)" HEAD~20..HEAD)
+            CHANGES=$(git log --pretty=format:"- %s (%h)")
           fi
 
           echo "$CHANGES" > changelog.txt
