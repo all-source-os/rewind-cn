@@ -1,0 +1,4 @@
+wal/
+storage/
+sync/.remote_ids
+sync/.local_ids
