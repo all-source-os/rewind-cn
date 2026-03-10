@@ -127,6 +127,9 @@ mod tests {
             epic_id: None,
             agent_id: None,
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         };
         let tasks = vec![&task];
         let output = format_task_list(&tasks);
@@ -169,6 +172,9 @@ mod tests {
             epic_id: None,
             agent_id: None,
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         };
         let output = format_task_detail(&task);
         assert!(output.contains("id:t-1"));

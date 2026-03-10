@@ -1,8 +1,45 @@
 use allframe::cqrs::EventTypeName;
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{AgentId, EpicId, SessionId, TaskId};
+
+/// Acceptance criterion for a task — a verifiable checkbox the agent must check off.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AcceptanceCriterion {
+    pub description: String,
+    #[serde(default)]
+    pub checked: bool,
+}
+
+/// Quality gate tier — determines when the gate runs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub enum GateTier {
+    /// Run once when all tasks in the epic complete.
+    #[default]
+    Epic,
+    /// Checked per story where relevant.
+    Story,
+}
+
+/// A quality gate — a command that validates the codebase.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct QualityGate {
+    pub command: String,
+    #[serde(default)]
+    pub tier: GateTier,
+}
+
+/// Story type tag — determines which story-level gates apply.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub enum StoryType {
+    Schema,
+    Backend,
+    UI,
+    Integration,
+    Infrastructure,
+}
 
 /// All domain events in the Rewind system.
 ///
@@ -18,6 +55,12 @@ pub enum RewindEvent {
         description: String,
         epic_id: Option<EpicId>,
         created_at: DateTime<Utc>,
+        #[serde(default)]
+        acceptance_criteria: Vec<AcceptanceCriterion>,
+        #[serde(default)]
+        story_type: Option<StoryType>,
+        #[serde(default)]
+        depends_on: Vec<TaskId>,
     },
     TaskAssigned {
         task_id: TaskId,
@@ -43,16 +86,34 @@ pub enum RewindEvent {
         blocked_at: DateTime<Utc>,
     },
 
+    // Criterion events
+    CriterionChecked {
+        task_id: TaskId,
+        criterion_index: usize,
+        checked_at: DateTime<Utc>,
+    },
+
     // Epic events
     EpicCreated {
         epic_id: EpicId,
         title: String,
         description: String,
         created_at: DateTime<Utc>,
+        #[serde(default)]
+        quality_gates: Vec<QualityGate>,
     },
     EpicCompleted {
         epic_id: EpicId,
         completed_at: DateTime<Utc>,
+    },
+
+    // Quality gate events
+    QualityGateRan {
+        epic_id: EpicId,
+        command: String,
+        passed: bool,
+        output: String,
+        ran_at: DateTime<Utc>,
     },
 
     // Session events
@@ -63,6 +124,15 @@ pub enum RewindEvent {
     SessionEnded {
         session_id: SessionId,
         ended_at: DateTime<Utc>,
+    },
+
+    // Agent events
+    AgentToolCall {
+        task_id: TaskId,
+        tool_name: String,
+        args_summary: String,
+        result_summary: String,
+        called_at: DateTime<Utc>,
     },
 }
 

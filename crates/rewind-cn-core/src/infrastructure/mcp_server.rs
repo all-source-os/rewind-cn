@@ -311,6 +311,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
             .create_epic(CreateEpic {
                 title: plan.epic_title.clone(),
                 description: plan.epic_description.clone(),
+                quality_gates: vec![],
             })
             .await
         {
@@ -324,13 +325,16 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
         };
 
         // Create tasks
-        for task in &plan.tasks {
+        for task in &plan.stories {
             if let Err(e) = self
                 .engine
                 .create_task(CreateTask {
                     title: task.title.clone(),
                     description: task.description.clone(),
                     epic_id: Some(epic_id.clone()),
+                    acceptance_criteria: vec![],
+                    story_type: None,
+                    depends_on: vec![],
                 })
                 .await
             {

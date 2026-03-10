@@ -126,6 +126,9 @@ mod tests {
                 title: "Test task".into(),
                 description: "".into(),
                 epic_id: None,
+                acceptance_criteria: vec![],
+                story_type: None,
+                depends_on: vec![],
             })
             .await
             .unwrap();

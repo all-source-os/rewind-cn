@@ -12,7 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 rewind-cn-core = { version = "0.1.0", path = "../rewind-cn-core" }
+atty = "0.2"
 clap = { version = "4", features = ["derive"] }
+rig-core = "0.32"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use super::events::RewindEvent;
+use super::events::{AcceptanceCriterion, QualityGate, RewindEvent, StoryType};
 use super::ids::{AgentId, EpicId, TaskId};
 
 // --- Aggregates ---
@@ -45,6 +45,9 @@ pub struct TaskAggregate {
     pub agent_id: Option<AgentId>,
     pub blocked_by: Option<TaskId>,
     pub failure_reason: Option<String>,
+    pub acceptance_criteria: Vec<AcceptanceCriterion>,
+    pub story_type: Option<StoryType>,
+    pub depends_on: Vec<TaskId>,
 }
 
 impl TaskAggregate {
@@ -55,12 +58,18 @@ impl TaskAggregate {
                 title,
                 description,
                 epic_id,
+                acceptance_criteria,
+                story_type,
+                depends_on,
                 ..
             } => {
                 self.task_id = task_id.clone();
                 self.title = title.clone();
                 self.description = description.clone();
                 self.epic_id = epic_id.clone();
+                self.acceptance_criteria = acceptance_criteria.clone();
+                self.story_type = story_type.clone();
+                self.depends_on = depends_on.clone();
                 self.status = TaskStatus::Pending;
             }
             RewindEvent::TaskAssigned { agent_id, .. } => {
@@ -110,6 +119,7 @@ pub struct EpicAggregate {
     pub title: String,
     pub description: String,
     pub status: EpicStatus,
+    pub quality_gates: Vec<QualityGate>,
 }
 
 impl EpicAggregate {
@@ -119,11 +129,13 @@ impl EpicAggregate {
                 epic_id,
                 title,
                 description,
+                quality_gates,
                 ..
             } => {
                 self.epic_id = epic_id.clone();
                 self.title = title.clone();
                 self.description = description.clone();
+                self.quality_gates = quality_gates.clone();
                 self.status = EpicStatus::Open;
             }
             RewindEvent::EpicCompleted { .. } => {
@@ -146,12 +158,17 @@ pub struct TaskView {
     pub epic_id: Option<EpicId>,
     pub agent_id: Option<AgentId>,
     pub created_at: DateTime<Utc>,
+    pub acceptance_criteria: Vec<AcceptanceCriterion>,
+    pub story_type: Option<StoryType>,
+    pub depends_on: Vec<TaskId>,
 }
 
 /// Projection that maintains the full backlog as a HashMap of task views.
 #[derive(Debug, Default)]
 pub struct BacklogProjection {
     pub tasks: HashMap<String, TaskView>,
+    /// Set of completed task IDs for fast dependency lookups.
+    completed_tasks: HashSet<String>,
 }
 
 impl BacklogProjection {
@@ -166,6 +183,31 @@ impl BacklogProjection {
         self.tasks.len()
     }
 
+    /// Returns true if any of the task's dependencies are not yet completed.
+    pub fn is_blocked(&self, task_id: &str) -> bool {
+        if let Some(task) = self.tasks.get(task_id) {
+            task.depends_on
+                .iter()
+                .any(|dep| !self.completed_tasks.contains(dep.as_ref()))
+        } else {
+            false
+        }
+    }
+
+    /// Returns the number of checked criteria for a task.
+    pub fn criteria_checked_count(&self, task_id: &str) -> (usize, usize) {
+        if let Some(task) = self.tasks.get(task_id) {
+            let checked = task
+                .acceptance_criteria
+                .iter()
+                .filter(|c| c.checked)
+                .count();
+            (checked, task.acceptance_criteria.len())
+        } else {
+            (0, 0)
+        }
+    }
+
     pub fn apply_event(&mut self, event: &RewindEvent) {
         match event {
             RewindEvent::TaskCreated {
@@ -174,6 +216,9 @@ impl BacklogProjection {
                 description,
                 epic_id,
                 created_at,
+                acceptance_criteria,
+                story_type,
+                depends_on,
             } => {
                 self.tasks.insert(
                     task_id.to_string(),
@@ -185,6 +230,9 @@ impl BacklogProjection {
                         epic_id: epic_id.clone(),
                         agent_id: None,
                         created_at: *created_at,
+                        acceptance_criteria: acceptance_criteria.clone(),
+                        story_type: story_type.clone(),
+                        depends_on: depends_on.clone(),
                     },
                 );
             }
@@ -205,6 +253,7 @@ impl BacklogProjection {
                 if let Some(task) = self.tasks.get_mut(task_id.as_ref()) {
                     task.status = TaskStatus::Completed;
                 }
+                self.completed_tasks.insert(task_id.to_string());
             }
             RewindEvent::TaskFailed { task_id, .. } => {
                 if let Some(task) = self.tasks.get_mut(task_id.as_ref()) {
@@ -214,6 +263,17 @@ impl BacklogProjection {
             RewindEvent::TaskBlocked { task_id, .. } => {
                 if let Some(task) = self.tasks.get_mut(task_id.as_ref()) {
                     task.status = TaskStatus::Blocked;
+                }
+            }
+            RewindEvent::CriterionChecked {
+                task_id,
+                criterion_index,
+                ..
+            } => {
+                if let Some(task) = self.tasks.get_mut(task_id.as_ref()) {
+                    if let Some(criterion) = task.acceptance_criteria.get_mut(*criterion_index) {
+                        criterion.checked = true;
+                    }
                 }
             }
             _ => {}
@@ -234,6 +294,7 @@ pub struct EpicProgress {
     pub total_tasks: usize,
     pub completed_tasks: usize,
     pub is_completed: bool,
+    pub quality_gates: Vec<QualityGate>,
 }
 
 impl EpicProgressProjection {
@@ -249,12 +310,18 @@ impl EpicProgressProjection {
 
     pub fn apply_event(&mut self, event: &RewindEvent) {
         match event {
-            RewindEvent::EpicCreated { epic_id, title, .. } => {
+            RewindEvent::EpicCreated {
+                epic_id,
+                title,
+                quality_gates,
+                ..
+            } => {
                 self.epics.insert(
                     epic_id.to_string(),
                     EpicProgress {
                         epic_id: epic_id.clone(),
                         title: title.clone(),
+                        quality_gates: quality_gates.clone(),
                         ..Default::default()
                     },
                 );
@@ -296,6 +363,9 @@ mod tests {
             description: "Fix the login bug".into(),
             epic_id: None,
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
         assert_eq!(task.task_id, TaskId::new("t-1"));
         assert_eq!(task.status, TaskStatus::Pending);
@@ -331,6 +401,9 @@ mod tests {
             description: "Deploy to prod".into(),
             epic_id: Some(EpicId::new("e-1")),
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
 
         task.apply_event(&RewindEvent::TaskFailed {
@@ -351,6 +424,7 @@ mod tests {
             title: "Sprint 1".into(),
             description: "First sprint".into(),
             created_at: Utc::now(),
+            quality_gates: vec![],
         });
         assert_eq!(epic.epic_id, EpicId::new("e-1"));
         assert_eq!(epic.status, EpicStatus::Open);
@@ -372,6 +446,9 @@ mod tests {
             description: "Desc".into(),
             epic_id: None,
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
 
         assert_eq!(proj.task_count(), 1);
@@ -395,6 +472,7 @@ mod tests {
             title: "Sprint 1".into(),
             description: "First sprint".into(),
             created_at: Utc::now(),
+            quality_gates: vec![],
         });
 
         proj.apply_event(&RewindEvent::TaskCreated {
@@ -403,9 +481,98 @@ mod tests {
             description: "Desc".into(),
             epic_id: Some(EpicId::new("e-1")),
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
 
         assert_eq!(proj.epics.get("e-1").unwrap().total_tasks, 1);
         assert_eq!(proj.progress_pct("e-1"), Some(0.0));
+    }
+
+    #[test]
+    fn is_blocked_checks_dependencies() {
+        let mut proj = BacklogProjection::default();
+        let now = Utc::now();
+
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-1"),
+            title: "Foundation".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        });
+
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-2"),
+            title: "Depends on t-1".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![TaskId::new("t-1")],
+        });
+
+        assert!(!proj.is_blocked("t-1")); // no deps
+        assert!(proj.is_blocked("t-2")); // t-1 not completed
+
+        proj.apply_event(&RewindEvent::TaskCompleted {
+            task_id: TaskId::new("t-1"),
+            completed_at: now,
+        });
+
+        assert!(!proj.is_blocked("t-2")); // t-1 now completed
+    }
+
+    #[test]
+    fn criteria_checked_count_tracks_progress() {
+        let mut proj = BacklogProjection::default();
+        let now = Utc::now();
+
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-1"),
+            title: "Task with criteria".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now,
+            acceptance_criteria: vec![
+                AcceptanceCriterion {
+                    description: "Criterion A".into(),
+                    checked: false,
+                },
+                AcceptanceCriterion {
+                    description: "Criterion B".into(),
+                    checked: false,
+                },
+                AcceptanceCriterion {
+                    description: "Criterion C".into(),
+                    checked: false,
+                },
+            ],
+            story_type: None,
+            depends_on: vec![],
+        });
+
+        assert_eq!(proj.criteria_checked_count("t-1"), (0, 3));
+
+        proj.apply_event(&RewindEvent::CriterionChecked {
+            task_id: TaskId::new("t-1"),
+            criterion_index: 0,
+            checked_at: now,
+        });
+
+        assert_eq!(proj.criteria_checked_count("t-1"), (1, 3));
+
+        proj.apply_event(&RewindEvent::CriterionChecked {
+            task_id: TaskId::new("t-1"),
+            criterion_index: 2,
+            checked_at: now,
+        });
+
+        assert_eq!(proj.criteria_checked_count("t-1"), (2, 3));
     }
 }

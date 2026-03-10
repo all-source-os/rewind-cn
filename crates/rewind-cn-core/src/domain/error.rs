@@ -13,6 +13,9 @@ pub enum RewindError {
 
     #[error("Storage error: {0}")]
     Storage(String),
+
+    #[error("Config error: {0}")]
+    Config(String),
 }
 
 impl RewindError {

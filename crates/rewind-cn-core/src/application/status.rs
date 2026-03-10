@@ -65,6 +65,7 @@ mod tests {
             title: "Sprint 1".into(),
             description: "".into(),
             created_at: Utc::now(),
+            quality_gates: vec![],
         });
 
         backlog.apply_event(&RewindEvent::TaskCreated {
@@ -73,6 +74,9 @@ mod tests {
             description: "".into(),
             epic_id: Some(EpicId::new("e-1")),
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
         epics.apply_event(&RewindEvent::TaskCreated {
             task_id: TaskId::new("t-1"),
@@ -80,6 +84,9 @@ mod tests {
             description: "".into(),
             epic_id: Some(EpicId::new("e-1")),
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
 
         backlog.apply_event(&RewindEvent::TaskCreated {
@@ -88,6 +95,9 @@ mod tests {
             description: "".into(),
             epic_id: None,
             created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
 
         backlog.apply_event(&RewindEvent::TaskCompleted {

@@ -67,6 +67,72 @@ impl ChronisBridge {
     pub fn show_task(task_id: &str) -> Result<String, RewindError> {
         run_cn(&["show", task_id, "--toon"])
     }
+
+    /// Mark a task done with a summary of criteria results.
+    /// Appends the summary as a comment if possible, otherwise just marks done.
+    pub fn done_with_summary(task_id: &str, criteria_summary: &str) -> Result<String, RewindError> {
+        // First mark done
+        let result = Self::done(task_id)?;
+
+        // Then add a comment with the criteria summary (best-effort)
+        if !criteria_summary.is_empty() {
+            let comment = format!("Criteria results:\n{criteria_summary}");
+            match run_cn(&["comment", task_id, "--toon", "--message", &comment]) {
+                Ok(_) => debug!("Added criteria summary comment to {task_id}"),
+                Err(e) => warn!("Failed to add criteria comment (continuing): {e}"),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Mark a task failed with specific criteria failure info.
+    pub fn fail_with_criteria(
+        task_id: &str,
+        failed_criteria: &[(usize, &str)],
+    ) -> Result<String, RewindError> {
+        let reason = if failed_criteria.is_empty() {
+            "Task failed evaluation".to_string()
+        } else {
+            let details: Vec<String> = failed_criteria
+                .iter()
+                .map(|(idx, reason)| format!("  #{idx}: {reason}"))
+                .collect();
+            format!("Failed criteria:\n{}", details.join("\n"))
+        };
+
+        Self::fail(task_id, &reason)
+    }
+
+    /// Sync quality gate results as a comment on the epic task.
+    pub fn sync_gate_results(
+        epic_id: &str,
+        results: &[(String, bool, String)],
+    ) -> Result<(), RewindError> {
+        let mut comment = String::from("Quality Gate Results:\n");
+        for (command, passed, output) in results {
+            let status = if *passed { "PASS" } else { "FAIL" };
+            comment.push_str(&format!("  [{status}] {command}"));
+            if !passed {
+                // Include first line of output for failed gates
+                if let Some(first_line) = output.lines().next() {
+                    comment.push_str(&format!(": {first_line}"));
+                }
+            }
+            comment.push('\n');
+        }
+
+        match run_cn(&["comment", epic_id, "--toon", "--message", &comment]) {
+            Ok(_) => {
+                debug!("Synced gate results to chronis epic {epic_id}");
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Failed to sync gate results (continuing): {e}");
+                Ok(()) // Best-effort: don't fail the orchestration
+            }
+        }
+    }
 }
 
 /// Execute a `cn` command and return stdout.

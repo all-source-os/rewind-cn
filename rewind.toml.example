@@ -2,11 +2,22 @@
 
 project_name = "my-project"
 
-[llm]
+# Agent configuration — uncomment to enable LLM-powered plan & execute
+# [agent]
 # provider = "anthropic"
-# model = "claude-sonnet-4-20250514"
 # api_key_env = "ANTHROPIC_API_KEY"
+#
+# [agent.planner]
+# model = "claude-sonnet-4-5-20250514"
+#
+# [agent.coder]
+# model = "claude-sonnet-4-5-20250514"
+# max_tokens = 16384
+#
+# [agent.evaluator]
+# model = "claude-haiku-4-5-20251001"
 
-[agents]
+[execution]
 max_concurrent = 3
 timeout_secs = 300
+max_retries = 2

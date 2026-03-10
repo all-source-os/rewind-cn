@@ -1,11 +1,14 @@
 use crate::domain::model::{BacklogProjection, TaskStatus, TaskView};
 
-/// Returns pending tasks sorted by creation time (FIFO), up to `max`.
+/// Returns pending, unblocked tasks sorted by creation time (FIFO), up to `max`.
+///
+/// A task is runnable if it is `Pending` and all of its `depends_on` tasks
+/// have reached `Completed` status.
 pub fn pick_runnable_tasks(backlog: &BacklogProjection, max: usize) -> Vec<&TaskView> {
     let mut pending: Vec<&TaskView> = backlog
         .tasks
         .values()
-        .filter(|t| t.status == TaskStatus::Pending)
+        .filter(|t| t.status == TaskStatus::Pending && !backlog.is_blocked(t.task_id.as_ref()))
         .collect();
     pending.sort_by_key(|t| t.created_at);
     pending.truncate(max);
@@ -36,6 +39,9 @@ mod tests {
             description: "".into(),
             epic_id: None,
             created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
         backlog.apply_event(&RewindEvent::TaskCreated {
             task_id: TaskId::new("t-2"),
@@ -43,6 +49,9 @@ mod tests {
             description: "".into(),
             epic_id: None,
             created_at: now + Duration::seconds(1),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
         backlog.apply_event(&RewindEvent::TaskCompleted {
             task_id: TaskId::new("t-1"),
@@ -66,9 +75,57 @@ mod tests {
                 description: "".into(),
                 epic_id: None,
                 created_at: now + Duration::seconds(i),
+                acceptance_criteria: vec![],
+                story_type: None,
+                depends_on: vec![],
             });
         }
 
         assert_eq!(pick_runnable_tasks(&backlog, 2).len(), 2);
+    }
+
+    #[test]
+    fn skips_blocked_tasks() {
+        let mut backlog = BacklogProjection::default();
+        let now = Utc::now();
+
+        // t-1 has no deps → runnable
+        backlog.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-1"),
+            title: "Foundation".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        });
+
+        // t-2 depends on t-1 → blocked
+        backlog.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-2"),
+            title: "Depends on t-1".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now + Duration::seconds(1),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![TaskId::new("t-1")],
+        });
+
+        let runnable = pick_runnable_tasks(&backlog, 10);
+        assert_eq!(runnable.len(), 1);
+        assert_eq!(runnable[0].task_id, TaskId::new("t-1"));
+
+        // Complete t-1 → t-2 becomes runnable
+        backlog.apply_event(&RewindEvent::TaskCompleted {
+            task_id: TaskId::new("t-1"),
+            completed_at: now,
+        });
+
+        let runnable = pick_runnable_tasks(&backlog, 10);
+        // t-1 is completed (not pending), t-2 is now unblocked and pending
+        assert_eq!(runnable.len(), 1);
+        assert_eq!(runnable[0].task_id, TaskId::new("t-2"));
     }
 }

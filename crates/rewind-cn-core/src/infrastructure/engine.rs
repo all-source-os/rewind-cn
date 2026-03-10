@@ -193,6 +193,19 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
         self.dispatch_and_append(&agg_id, EndSessionCmd(cmd)).await
     }
 
+    /// Append events directly (without going through the command bus).
+    /// Used for events like AgentToolCall and CriterionChecked that don't need command validation.
+    pub async fn append_events(&self, events: Vec<RewindEvent>) -> Result<(), RewindError> {
+        self.event_store
+            .append("agent", events.clone())
+            .await
+            .map_err(RewindError::Storage)?;
+        for event in &events {
+            self.apply_to_projections(event).await;
+        }
+        Ok(())
+    }
+
     /// Generic dispatch: dispatches a command, appends resulting events, and updates projections.
     async fn dispatch_and_append<C: allframe::cqrs::Command>(
         &self,
@@ -251,6 +264,9 @@ mod tests {
                 title: "Write tests".into(),
                 description: "Add unit tests".into(),
                 epic_id: None,
+                acceptance_criteria: vec![],
+                story_type: None,
+                depends_on: vec![],
             })
             .await
             .unwrap();
@@ -271,6 +287,9 @@ mod tests {
                 title: "Task A".into(),
                 description: "First".into(),
                 epic_id: None,
+                acceptance_criteria: vec![],
+                story_type: None,
+                depends_on: vec![],
             })
             .await
             .unwrap();
@@ -280,6 +299,9 @@ mod tests {
                 title: "Task B".into(),
                 description: "Second".into(),
                 epic_id: None,
+                acceptance_criteria: vec![],
+                story_type: None,
+                depends_on: vec![],
             })
             .await
             .unwrap();
@@ -301,6 +323,9 @@ mod tests {
                 title: "Lifecycle test".into(),
                 description: "".into(),
                 epic_id: None,
+                acceptance_criteria: vec![],
+                story_type: None,
+                depends_on: vec![],
             })
             .await
             .unwrap();

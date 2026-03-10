@@ -1,7 +1,13 @@
 pub mod adapters;
 pub mod agent;
 pub mod chronis;
+pub mod coder;
 pub mod command_bridge;
 pub mod engine;
+pub mod evaluator;
+pub mod gate_runner;
+pub mod llm;
 pub mod mcp_server;
+pub mod orchestrator;
+pub mod planner;
 pub mod toon;

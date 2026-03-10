@@ -19,6 +19,9 @@ pub fn handle_create_task(cmd: CreateTask) -> Result<Vec<RewindEvent>, RewindErr
         description: cmd.description,
         epic_id: cmd.epic_id,
         created_at: Utc::now(),
+        acceptance_criteria: cmd.acceptance_criteria,
+        story_type: cmd.story_type,
+        depends_on: cmd.depends_on,
     }])
 }
 
@@ -70,6 +73,7 @@ pub fn handle_create_epic(cmd: CreateEpic) -> Result<Vec<RewindEvent>, RewindErr
         title: cmd.title,
         description: cmd.description,
         created_at: Utc::now(),
+        quality_gates: cmd.quality_gates,
     }])
 }
 
@@ -104,6 +108,9 @@ mod tests {
             title: "Test task".into(),
             description: "A test".into(),
             epic_id: None,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         })
         .unwrap();
 
@@ -120,6 +127,9 @@ mod tests {
             title: "  ".into(),
             description: "desc".into(),
             epic_id: None,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
         });
 
         assert!(result.is_err());
@@ -130,6 +140,7 @@ mod tests {
         let events = handle_create_epic(CreateEpic {
             title: "Sprint 1".into(),
             description: "First sprint".into(),
+            quality_gates: vec![],
         })
         .unwrap();
 

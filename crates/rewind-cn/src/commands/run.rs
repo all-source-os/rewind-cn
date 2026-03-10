@@ -7,6 +7,8 @@ use rewind_cn_core::domain::events::RewindEvent;
 use rewind_cn_core::domain::ids::TaskId;
 use rewind_cn_core::infrastructure::agent::AgentWorker;
 use rewind_cn_core::infrastructure::engine::RewindEngine;
+use rewind_cn_core::infrastructure::llm::create_anthropic_client;
+use rewind_cn_core::infrastructure::orchestrator::Orchestrator;
 
 use crate::config::RewindConfig;
 
@@ -23,7 +25,7 @@ pub async fn execute(
     }
 
     let config = RewindConfig::load(Path::new(CONFIG_FILE))?;
-    let max_concurrent = max_concurrent_override.unwrap_or(config.agents.max_concurrent);
+    let max_concurrent = max_concurrent_override.unwrap_or(config.execution.max_concurrent);
 
     let engine = RewindEngine::load(DATA_DIR)
         .await
@@ -74,7 +76,56 @@ pub async fn execute(
         return Ok(());
     }
 
-    // Start session
+    // Check if we should use the orchestrator (LLM agent execution)
+    if let Some(ref agent_config) = config.agent {
+        eprintln!(
+            "Using LLM orchestrator (coder: {}, evaluator: {})",
+            agent_config.coder.model, agent_config.evaluator.model
+        );
+        let client = create_anthropic_client(agent_config).map_err(|e| e.to_string())?;
+        let work_dir = std::env::current_dir().map_err(|e| e.to_string())?;
+
+        let orchestrator = Orchestrator::new(
+            client,
+            agent_config.clone(),
+            work_dir,
+            config.execution.timeout_secs,
+            config.execution.max_retries,
+        );
+
+        // Start session
+        let session_events = engine.start_session().await.map_err(|e| e.to_string())?;
+        let session_id = match &session_events[0] {
+            RewindEvent::SessionStarted { session_id, .. } => session_id.clone(),
+            _ => return Err("Unexpected event type".into()),
+        };
+        eprintln!("Session started: {session_id}");
+
+        let (completed, failed) = orchestrator
+            .execute_runnable(&engine, max_concurrent)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = engine
+            .end_session(EndSession { session_id })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        println!(
+            "Session complete: {} task(s) executed ({} passed, {} failed)",
+            completed + failed,
+            completed,
+            failed
+        );
+
+        if failed > 0 {
+            return Err(format!("{failed} task(s) failed"));
+        }
+
+        return Ok(());
+    }
+
+    // Fallback: Phase 1 mock execution
     let session_events = engine.start_session().await.map_err(|e| e.to_string())?;
     let session_id = match &session_events[0] {
         RewindEvent::SessionStarted { session_id, .. } => session_id.clone(),
@@ -86,7 +137,6 @@ pub async fn execute(
     let mut completed = 0usize;
     let mut failed = 0usize;
 
-    // Execute tasks (sequential for Phase 1, concurrent via JoinSet in Phase 2)
     let engine = Arc::new(engine);
     for (i, (task_id, title)) in tasks_to_run.iter().enumerate() {
         let worker = AgentWorker::new();
@@ -107,7 +157,6 @@ pub async fn execute(
         }
     }
 
-    // End session
     let _ = engine
         .end_session(EndSession { session_id })
         .await
