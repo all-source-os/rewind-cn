@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use allframe::cqrs::allsource_backend::AllSourceBackend;
 use allframe::cqrs::{CommandBus, EventStore, InMemoryBackend, Projection};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tracing::info;
 
+use crate::application::analytics::AnalyticsProjection;
 use crate::application::commands;
 use crate::domain::error::RewindError;
 use crate::domain::events::RewindEvent;
@@ -21,6 +22,8 @@ pub struct RewindEngine<
     pub command_bus: CommandBus<RewindEvent>,
     backlog: Arc<RwLock<BacklogProjection>>,
     epic_progress: Arc<RwLock<EpicProgressProjection>>,
+    analytics: Arc<RwLock<AnalyticsProjection>>,
+    event_tx: broadcast::Sender<RewindEvent>,
 }
 
 impl RewindEngine<AllSourceBackend<RewindEvent>> {
@@ -36,12 +39,15 @@ impl RewindEngine<AllSourceBackend<RewindEvent>> {
         let backend = AllSourceBackend::production(data_path).map_err(RewindError::Storage)?;
         let event_store = Arc::new(EventStore::with_backend(backend));
         let command_bus = CommandBus::new();
+        let (event_tx, _) = broadcast::channel(256);
 
         let mut engine = Self {
             event_store,
             command_bus,
             backlog: Arc::new(RwLock::new(BacklogProjection::default())),
             epic_progress: Arc::new(RwLock::new(EpicProgressProjection::default())),
+            analytics: Arc::new(RwLock::new(AnalyticsProjection::default())),
+            event_tx,
         };
         engine.register_handlers().await;
 
@@ -65,12 +71,15 @@ impl RewindEngine<InMemoryBackend<RewindEvent>> {
     pub async fn in_memory() -> Self {
         let event_store = Arc::new(EventStore::new());
         let command_bus = CommandBus::new();
+        let (event_tx, _) = broadcast::channel(256);
 
         let mut engine = Self {
             event_store,
             command_bus,
             backlog: Arc::new(RwLock::new(BacklogProjection::default())),
             epic_progress: Arc::new(RwLock::new(EpicProgressProjection::default())),
+            analytics: Arc::new(RwLock::new(AnalyticsProjection::default())),
+            event_tx,
         };
         engine.register_handlers().await;
         engine
@@ -108,10 +117,19 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
             .await;
     }
 
-    /// Apply an event to all projections.
+    /// Apply an event to all projections and broadcast to subscribers.
+    #[hotpath::measure]
     async fn apply_to_projections(&self, event: &RewindEvent) {
         self.backlog.write().await.apply(event);
         self.epic_progress.write().await.apply(event);
+        self.analytics.write().await.apply_event(event);
+        // Best-effort broadcast — no subscribers is fine
+        let _ = self.event_tx.send(event.clone());
+    }
+
+    /// Subscribe to real-time event updates (for TUI dashboard).
+    pub fn subscribe(&self) -> broadcast::Receiver<RewindEvent> {
+        self.event_tx.subscribe()
     }
 
     /// Get a read handle to the backlog projection.
@@ -122,6 +140,11 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
     /// Get a read handle to the epic progress projection.
     pub fn epic_progress(&self) -> Arc<RwLock<EpicProgressProjection>> {
         self.epic_progress.clone()
+    }
+
+    /// Get a read handle to the analytics projection.
+    pub fn analytics(&self) -> Arc<RwLock<AnalyticsProjection>> {
+        self.analytics.clone()
     }
 
     pub async fn create_task(
@@ -195,6 +218,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
 
     /// Append events directly (without going through the command bus).
     /// Used for events like AgentToolCall and CriterionChecked that don't need command validation.
+    #[hotpath::measure]
     pub async fn append_events(&self, events: Vec<RewindEvent>) -> Result<(), RewindError> {
         self.event_store
             .append("agent", events.clone())
@@ -207,6 +231,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
     }
 
     /// Generic dispatch: dispatches a command, appends resulting events, and updates projections.
+    #[hotpath::measure]
     async fn dispatch_and_append<C: allframe::cqrs::Command>(
         &self,
         aggregate_id: &str,
@@ -228,6 +253,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
     }
 
     /// Rebuild all projections from the event store.
+    #[hotpath::measure]
     pub async fn rebuild_projections(&self) -> Result<(), RewindError> {
         let events = self
             .event_store
@@ -237,12 +263,15 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
 
         let mut backlog = self.backlog.write().await;
         let mut epic_progress = self.epic_progress.write().await;
+        let mut analytics = self.analytics.write().await;
         *backlog = BacklogProjection::default();
         *epic_progress = EpicProgressProjection::default();
+        *analytics = AnalyticsProjection::default();
 
         for event in &events {
             backlog.apply(event);
             epic_progress.apply(event);
+            analytics.apply_event(event);
         }
         Ok(())
     }

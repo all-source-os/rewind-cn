@@ -243,6 +243,20 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                             },
                             "required": ["task_id"]
                         }
+                    },
+                    {
+                        "name": "rewind_feedback",
+                        "description": "Submit feedback or bug report. Creates a GitHub issue if gh CLI is available, otherwise returns a pre-filled issue URL.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {
+                                    "type": "string",
+                                    "description": "Feedback message or bug description"
+                                }
+                            },
+                            "required": ["message"]
+                        }
                     }
                 ]
             }),
@@ -259,6 +273,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
             "rewind_run" => self.tool_run(id, arguments).await,
             "rewind_task_list" => self.tool_task_list(id, arguments).await,
             "rewind_task_get" => self.tool_task_get(id, arguments).await,
+            "rewind_feedback" => self.tool_feedback(id, arguments).await,
             _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {tool_name}")),
         }
     }
@@ -480,6 +495,60 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                 }
             }
             None => JsonRpcResponse::error(id, -32000, format!("Task not found: {task_id}")),
+        }
+    }
+
+    async fn tool_feedback(&self, id: Option<Value>, args: Value) -> JsonRpcResponse {
+        let message = match args.get("message").and_then(|v| v.as_str()) {
+            Some(m) => m,
+            None => {
+                return JsonRpcResponse::error(id, -32602, "Missing required parameter: message")
+            }
+        };
+
+        let version = env!("CARGO_PKG_VERSION");
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        let body = format!(
+            "## Feedback\n\n{message}\n\n## Environment\n\n- rewind: v{version}\n- os: {os}/{arch}\n- source: MCP tool\n"
+        );
+
+        const REPO: &str = "all-source-os/rewind-cn";
+
+        // Try gh CLI
+        let gh_result = std::process::Command::new("gh")
+            .args([
+                "issue",
+                "create",
+                "--repo",
+                REPO,
+                "--title",
+                &format!("[feedback] {message}"),
+                "--body",
+                &body,
+                "--label",
+                "user-feedback",
+            ])
+            .output();
+
+        match gh_result {
+            Ok(output) if output.status.success() => {
+                let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                JsonRpcResponse::success(
+                    id,
+                    json!({ "content": [{ "type": "text", "text": format!("Feedback submitted: {url}") }] }),
+                )
+            }
+            _ => {
+                let url = format!(
+                    "https://github.com/{REPO}/issues/new?title=[feedback]%20{}&labels=user-feedback",
+                    message.replace(' ', "%20")
+                );
+                JsonRpcResponse::success(
+                    id,
+                    json!({ "content": [{ "type": "text", "text": format!("Could not submit automatically. Please create an issue at:\n{url}") }] }),
+                )
+            }
         }
     }
 

@@ -2,32 +2,33 @@
 
 **Autonomous coding agent orchestrator built on CQRS + Event Sourcing.**
 
-Rewind decomposes product requirements into tasks, schedules them across agent workers, and tracks progress — all backed by an append-only event store for full auditability.
+Rewind decomposes product requirements into tasks, schedules them across AI agent workers, and tracks progress — all backed by an append-only event store for full auditability. Multi-provider LLM support (Anthropic, OpenAI) with per-role configuration.
 
 ```
-rewind plan "Add user authentication with JWT"
-rewind run --max-concurrent 3
+rewind plan -f prd.md
+rewind run --parallel --tui
 rewind status
+rewind query task-summary
 ```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│  CLI (clap)                                     │
-│  init · plan · run · status · mcp               │
-├─────────────────────────────────────────────────┤
-│  Application Layer (pure logic)                 │
-│  commands · handlers · planning · scheduler     │
-├─────────────────────────────────────────────────┤
-│  Domain Layer (zero framework deps)             │
-│  events · aggregates · projections · ports      │
-├─────────────────────────────────────────────────┤
-│  Infrastructure (allframe CQRS)                 │
-│  engine · command bridge · agent workers · mcp  │
-├─────────────────────────────────────────────────┤
-│  AllSource Event Store                          │
-└─────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│  CLI (clap)                                                   │
+│  init · plan · run · status · query · import · report · mcp  │
+├───────────────────────────────────────────────────────────────┤
+│  Application Layer (pure logic)                               │
+│  commands · handlers · planning · scheduler · analytics       │
+├───────────────────────────────────────────────────────────────┤
+│  Domain Layer (zero framework deps)                           │
+│  events · aggregates · projections · ports                    │
+├───────────────────────────────────────────────────────────────┤
+│  Infrastructure (allframe CQRS)                               │
+│  engine · agents · orchestrator · worktree · importer · llm   │
+├───────────────────────────────────────────────────────────────┤
+│  AllSource Event Store                                        │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 Clean architecture with strict dependency direction — domain knows nothing about the framework, application layer contains pure functions, infrastructure adapts everything to [allframe](https://crates.io/crates/allframe).
@@ -36,8 +37,8 @@ Clean architecture with strict dependency direction — domain knows nothing abo
 
 | Crate | Role |
 |---|---|
-| `rewind-cn` | Binary — CLI interface and command orchestration |
-| `rewind-cn-core` | Library — domain model, CQRS engine, event sourcing |
+| [`rewind-cn`](https://crates.io/crates/rewind-cn) | Binary — CLI interface and command orchestration |
+| [`rewind-cn-core`](https://crates.io/crates/rewind-cn-core) | Library — domain model, CQRS engine, event sourcing |
 
 ## Getting Started
 
@@ -48,35 +49,74 @@ cargo install rewind-cn
 # Initialize a project
 rewind init
 
-# Create a plan from a description
-rewind plan "Build a REST API with CRUD endpoints for users"
-
-# Or from a file
+# Create a plan from a PRD file
 rewind plan -f prd.md
 
-# Execute pending tasks
-rewind run
+# Or from a description
+rewind plan "Build a REST API with CRUD endpoints for users"
+
+# Execute with parallel worktrees and TUI dashboard
+rewind run --parallel --tui
 
 # Check progress
 rewind status
+
+# Query analytics
+rewind query task-summary
 ```
 
 ### Configuration
 
-After `rewind init`, edit `.rewind/rewind.toml`:
+After `rewind init`, edit `rewind.toml`:
 
 ```toml
 project_name = "my-project"
 
-[llm]
-# provider = "anthropic"
-# model = "claude-sonnet-4-20250514"
-# api_key_env = "ANTHROPIC_API_KEY"
+# Agent configuration — per-role provider overrides supported
+[agent]
+provider = "anthropic"         # default provider for all roles
+api_key_env = "ANTHROPIC_API_KEY"
 
-[agents]
+[agent.planner]
+model = "claude-sonnet-4-5-20250514"
+
+[agent.coder]
+model = "claude-sonnet-4-5-20250514"
+max_tokens = 16384
+
+[agent.evaluator]
+model = "claude-haiku-4-5-20251001"
+# Override provider for a specific role:
+# provider = "openai"
+# api_key_env = "OPENAI_API_KEY"
+
+[execution]
 max_concurrent = 3
 timeout_secs = 300
+max_retries = 2
 ```
+
+### Multi-Provider Support
+
+Each agent role (planner, coder, evaluator) can use a different LLM provider:
+
+```toml
+[agent]
+provider = "anthropic"                    # global default
+
+[agent.planner]
+provider = "openai"                       # override for planner
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4o"
+
+[agent.coder]
+model = "claude-sonnet-4-5-20250514"      # inherits anthropic
+
+[agent.evaluator]
+model = "claude-haiku-4-5-20251001"       # inherits anthropic
+```
+
+Supported providers: `anthropic`, `openai`. Powered by [rig-core](https://crates.io/crates/rig-core).
 
 ## Commands
 
@@ -102,6 +142,8 @@ Picks up pending tasks and executes them through agent workers.
 | `--task <id>` | Run a single specific task |
 | `--dry-run` | Show what would execute without running |
 | `--max-concurrent <n>` | Maximum parallel workers (default: 3) |
+| `--parallel` | Use git worktrees for parallel task isolation |
+| `--tui` | Show TUI dashboard during execution |
 
 ### `rewind status`
 
@@ -111,9 +153,71 @@ Displays the current backlog and epic progress.
 |---|---|
 | `--json` | Output as JSON for scripting |
 
+### `rewind query <name>`
+
+Query execution analytics from the event store.
+
+| Query | Description |
+|---|---|
+| `task-summary` | Task status breakdown and timing |
+| `epic-summary` | Epic completion percentages |
+| `tool-usage` | Agent tool call frequency |
+| `session-history` | Session timeline |
+| `list` | Show available queries |
+
+| Flag | Description |
+|---|---|
+| `--json` | Output as JSON |
+| `--epic <id>` | Filter by epic |
+
+### `rewind import <file>`
+
+Import tasks and epics from a beads JSONL or JSON file.
+
+| Flag | Description |
+|---|---|
+| `--skip-closed` | Skip closed/done items (default: true) |
+
+Extracts acceptance criteria from `- [ ]` checkboxes, quality gates from backtick-quoted commands, and resolves parent-child and blocking dependencies.
+
+### `rewind report`
+
+Export an anonymized diagnostic report for troubleshooting.
+
+| Flag | Description |
+|---|---|
+| `--session <id>` | Export a specific session (default: last) |
+| `--full` | Include non-anonymized data |
+
+### `rewind feedback <message>`
+
+Submit feedback or report an issue.
+
+| Flag | Description |
+|---|---|
+| `--attach-report` | Include an anonymized diagnostic report |
+
 ### `rewind mcp`
 
-Starts an [MCP](https://modelcontextprotocol.io) server over stdio for IDE integration, exposing rewind's capabilities as tools and resources.
+Starts an [MCP](https://modelcontextprotocol.io) server over stdio for IDE integration, exposing rewind's capabilities as tools and resources. Supports optional `format: "toon"` for token-optimized output.
+
+## Key Features
+
+### TUI Dashboard
+
+Live dashboard during `rewind run --tui` showing task progress, agent activity, and epic completion in real time.
+
+### Git Worktree Parallel Execution
+
+`rewind run --parallel` isolates each agent in its own git worktree, enabling true parallel execution without merge conflicts. Changes are merged back on task completion.
+
+### Beads Import
+
+Import existing task hierarchies from chronis/beads JSONL files. Automatically extracts acceptance criteria, quality gates, and dependency graphs.
+
+### Execution Analytics
+
+Query the event store with `rewind query` for task timing, tool usage patterns, session history, and epic progress analytics.
 
 ## Event Sourcing Model
 
@@ -126,6 +230,8 @@ TaskCreated → TaskAssigned → TaskStarted → TaskCompleted
 EpicCreated → EpicCompleted
 
 SessionStarted → SessionEnded
+
+AgentToolCall · QualityGateRan
 ```
 
 State is rebuilt by replaying events through projections — no mutable database, full audit trail, time-travel debugging for free.
@@ -135,17 +241,35 @@ State is rebuilt by replaying events through projections — no mutable database
 - **BacklogProjection** — materialized view of all tasks and their current status
 - **EpicProgressProjection** — tracks completion percentage per epic
 
+## Chronis Integration
+
+Rewind integrates with [Chronis](https://all-source-os.github.io/all-source/chronis/) as an external task tracker:
+
+- **Chronis** owns the task backlog (definitions, dependencies, readiness)
+- **Rewind** owns execution state (sessions, agent assignment, event sourcing)
+
+### Skill Pipeline
+
+```
+1. /rewind-prd      → Generate PRD with quality gates and acceptance criteria
+2. /rewind-beads    → Convert PRD to chronis beads (cn create --toon)
+3. rewind run       → Execute with agent orchestration
+```
+
 ## Development
 
 ```bash
-# Run tests (22 passing)
+# Run tests (112 passing)
 cargo test
+
+# Lint
+cargo clippy -- -D warnings
+
+# Format
+cargo fmt --check
 
 # Run with debug logging
 RUST_LOG=debug rewind status
-
-# Run a specific test
-cargo test test_engine_roundtrip
 ```
 
 ### Project Structure
@@ -162,21 +286,24 @@ crates/rewind-cn-core/src/
 │   ├── commands.rs    # Command structs
 │   ├── handlers.rs    # Command → Vec<Event> handlers
 │   ├── planning.rs    # PRD → Epic + Tasks decomposition
-│   ├── scheduler.rs   # FIFO task scheduler
-│   └── status.rs      # Status summary builder
+│   ├── scheduler.rs   # Dependency-aware task scheduler
+│   ├── status.rs      # Status summary builder
+│   └── analytics.rs   # Event store query engine
 └── infrastructure/    # Framework integration
     ├── engine.rs      # RewindEngine<B> composition root
     ├── adapters.rs    # allframe Aggregate/Projection impls
     ├── command_bridge.rs  # Command trait adapters
-    ├── agent.rs       # AgentWorker task executor
-    └── mcp_server.rs  # JSON-RPC 2.0 MCP server
+    ├── orchestrator.rs    # Multi-agent orchestration loop
+    ├── planner.rs     # LLM-powered plan decomposition
+    ├── coder.rs       # Coding agent with tool use
+    ├── evaluator.rs   # Code review agent
+    ├── llm.rs         # Multi-provider client factory
+    ├── importer.rs    # Beads JSONL/JSON import
+    ├── worktree.rs    # Git worktree management
+    ├── telemetry.rs   # PostHog telemetry (opt-in)
+    ├── mcp_server.rs  # JSON-RPC 2.0 MCP server
+    └── toon.rs        # Token-optimized output format
 ```
-
-## Roadmap
-
-- **Phase 1** (current) — CLI scaffold, CQRS engine, mock agent execution
-- **Phase 2** — LLM-powered plan decomposition and agent execution
-- **Phase 3** — Multi-agent coordination, dependency graphs, parallel execution
 
 ## License
 

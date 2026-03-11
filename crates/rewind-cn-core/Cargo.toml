@@ -19,6 +19,15 @@ thiserror = "2"
 toml = "0.8"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
+hotpath = "0.14"
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
+telemetry = ["reqwest"]
 
 [dev-dependencies]
+chrono = "0.4"
+tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -1,6 +1,8 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::Utc;
+use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
 use crate::application::commands::{AssignTask, CompleteTask, FailTask, StartTask};
@@ -12,9 +14,8 @@ use crate::infrastructure::chronis::ChronisBridge;
 use crate::infrastructure::coder::{CoderAgent, ToolCallRecord};
 use crate::infrastructure::engine::RewindEngine;
 use crate::infrastructure::evaluator::EvaluatorAgent;
-use crate::infrastructure::llm::AgentConfig;
-
-use rig::providers::anthropic;
+use crate::infrastructure::llm::{AgentConfig, ProviderClient};
+use crate::infrastructure::worktree::WorktreeManager;
 
 /// Orchestrator runs the SELECT → PROMPT → EXECUTE → EVALUATE loop.
 pub struct Orchestrator {
@@ -30,7 +31,8 @@ pub struct Orchestrator {
 impl Orchestrator {
     /// Create a new orchestrator from config.
     pub fn new(
-        client: anthropic::Client,
+        coder_client: ProviderClient,
+        evaluator_client: ProviderClient,
         config: AgentConfig,
         work_dir: PathBuf,
         timeout_secs: u64,
@@ -42,8 +44,8 @@ impl Orchestrator {
         }
 
         Self {
-            coder: CoderAgent::new(client.clone(), config.clone()),
-            evaluator: EvaluatorAgent::new(client, config),
+            coder: CoderAgent::new(coder_client, config.clone()),
+            evaluator: EvaluatorAgent::new(evaluator_client, config),
             agent_id: AgentId::generate(),
             work_dir,
             timeout_secs,
@@ -55,15 +57,16 @@ impl Orchestrator {
     /// Create an orchestrator without chronis (for tests).
     #[cfg(test)]
     pub fn without_chronis(
-        client: anthropic::Client,
+        coder_client: ProviderClient,
+        evaluator_client: ProviderClient,
         config: AgentConfig,
         work_dir: PathBuf,
         timeout_secs: u64,
         max_retries: u32,
     ) -> Self {
         Self {
-            coder: CoderAgent::new(client.clone(), config.clone()),
-            evaluator: EvaluatorAgent::new(client, config),
+            coder: CoderAgent::new(coder_client, config.clone()),
+            evaluator: EvaluatorAgent::new(evaluator_client, config),
             agent_id: AgentId::generate(),
             work_dir,
             timeout_secs,
@@ -75,6 +78,7 @@ impl Orchestrator {
     /// Execute a single task through the full SELECT → PROMPT → EXECUTE → EVALUATE loop.
     ///
     /// Returns the tool call records and whether the task passed evaluation.
+    #[hotpath::measure]
     pub async fn execute_task<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
         &self,
         task: &TaskView,
@@ -192,6 +196,7 @@ impl Orchestrator {
     /// Execute all runnable tasks up to max_concurrent.
     ///
     /// Returns (completed_count, failed_count).
+    #[hotpath::measure]
     pub async fn execute_runnable<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
         &self,
         engine: &RewindEngine<B>,
@@ -257,6 +262,229 @@ impl Orchestrator {
         }
 
         Ok((completed, failed))
+    }
+
+    /// Execute a single task in a specific working directory (for worktree isolation).
+    #[hotpath::measure]
+    pub async fn execute_task_in_dir<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
+        &self,
+        task: &TaskView,
+        engine: &RewindEngine<B>,
+        work_dir: PathBuf,
+    ) -> Result<bool, RewindError> {
+        let task_id = &task.task_id;
+        let task_id_str = task_id.to_string();
+
+        if self.use_chronis {
+            match ChronisBridge::claim(&task_id_str) {
+                Ok(ack) => debug!("Chronis claim: {ack}"),
+                Err(e) => warn!("Chronis claim failed (continuing): {e}"),
+            }
+        }
+
+        engine
+            .assign_task(AssignTask {
+                task_id: task_id.clone(),
+                agent_id: self.agent_id.clone(),
+            })
+            .await?;
+
+        engine
+            .start_task(StartTask {
+                task_id: task_id.clone(),
+            })
+            .await?;
+
+        info!(
+            "Executing in worktree: {} ({})",
+            task.title,
+            work_dir.display()
+        );
+
+        let (tool_calls, agent_output) = self
+            .coder
+            .execute_task(
+                &task.title,
+                &task.description,
+                &task.acceptance_criteria,
+                work_dir,
+                self.timeout_secs,
+            )
+            .await?;
+
+        for call in &tool_calls {
+            let _ = engine
+                .append_events(vec![RewindEvent::AgentToolCall {
+                    task_id: task_id.clone(),
+                    tool_name: call.tool_name.clone(),
+                    args_summary: call.args_summary.clone(),
+                    result_summary: call.result_summary.clone(),
+                    called_at: Utc::now(),
+                }])
+                .await;
+        }
+
+        let eval_result = self
+            .evaluator
+            .evaluate(
+                &task.description,
+                &task.acceptance_criteria,
+                &tool_calls,
+                &agent_output,
+            )
+            .await?;
+
+        if eval_result.passed {
+            engine
+                .complete_task(CompleteTask {
+                    task_id: task_id.clone(),
+                })
+                .await?;
+
+            for cr in &eval_result.criteria_results {
+                if cr.passed {
+                    let _ = engine
+                        .append_events(vec![RewindEvent::CriterionChecked {
+                            task_id: task_id.clone(),
+                            criterion_index: cr.index,
+                            checked_at: Utc::now(),
+                        }])
+                        .await;
+                }
+            }
+
+            if self.use_chronis {
+                match ChronisBridge::done(&task_id_str) {
+                    Ok(ack) => debug!("Chronis done: {ack}"),
+                    Err(e) => warn!("Chronis done failed: {e}"),
+                }
+            }
+
+            Ok(true)
+        } else {
+            let reason = eval_result.summary.clone();
+            engine
+                .fail_task(FailTask {
+                    task_id: task_id.clone(),
+                    reason: reason.clone(),
+                })
+                .await?;
+
+            if self.use_chronis {
+                let _ = ChronisBridge::fail(&task_id_str, &reason);
+            }
+
+            Ok(false)
+        }
+    }
+
+    /// Execute runnable tasks in parallel using git worktrees.
+    ///
+    /// Returns (completed_count, failed_count).
+    #[hotpath::measure]
+    pub async fn execute_parallel<
+        B: allframe::cqrs::EventStoreBackend<RewindEvent> + Send + Sync + 'static,
+    >(
+        self: Arc<Self>,
+        engine: Arc<RewindEngine<B>>,
+        max_concurrent: usize,
+    ) -> Result<(usize, usize), RewindError> {
+        use crate::application::scheduler::pick_runnable_tasks;
+
+        let worktree_mgr = WorktreeManager::new(self.work_dir.clone());
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        loop {
+            engine.rebuild_projections().await?;
+
+            let tasks: Vec<TaskView> = {
+                let backlog = engine.backlog();
+                let backlog = backlog.read().await;
+                pick_runnable_tasks(&backlog, max_concurrent)
+                    .into_iter()
+                    .cloned()
+                    .collect()
+            };
+
+            if tasks.is_empty() {
+                break;
+            }
+
+            let mut handles = Vec::new();
+
+            for task in tasks {
+                let permit = semaphore
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .map_err(|e| RewindError::Config(format!("Semaphore error: {e}")))?;
+
+                let task_id_str = task.task_id.to_string();
+
+                // Create worktree
+                let worktree_path = match worktree_mgr.create(&task_id_str) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Failed to create worktree for {task_id_str}: {e}");
+                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        continue;
+                    }
+                };
+
+                let orchestrator = self.clone();
+                let engine = engine.clone();
+                let completed = completed.clone();
+                let failed = failed.clone();
+                let wt_mgr_root = self.work_dir.clone();
+
+                handles.push(tokio::spawn(async move {
+                    let _permit = permit;
+                    let task_id = task.task_id.to_string();
+
+                    eprintln!("[{task_id}] Starting in worktree...");
+
+                    let result = orchestrator
+                        .execute_task_in_dir(&task, &engine, worktree_path)
+                        .await;
+
+                    let wt_mgr = WorktreeManager::new(wt_mgr_root);
+
+                    match result {
+                        Ok(true) => {
+                            eprintln!("[{task_id}] PASSED — merging...");
+                            if let Err(e) = wt_mgr.merge_back(&task_id) {
+                                eprintln!("[{task_id}] Merge failed: {e}");
+                                failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            } else {
+                                completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                        Ok(false) => {
+                            eprintln!("[{task_id}] FAILED");
+                            failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            eprintln!("[{task_id}] ERROR: {e}");
+                            failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+
+                    wt_mgr.cleanup(&task_id);
+                }));
+            }
+
+            // Wait for all tasks in this batch
+            for handle in handles {
+                let _ = handle.await;
+            }
+        }
+
+        Ok((
+            completed.load(std::sync::atomic::Ordering::Relaxed),
+            failed.load(std::sync::atomic::Ordering::Relaxed),
+        ))
     }
 
     pub fn max_retries(&self) -> u32 {

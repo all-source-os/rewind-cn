@@ -1,5 +1,9 @@
+pub mod feedback;
+pub mod import;
 pub mod init;
 pub mod mcp;
 pub mod plan;
+pub mod query;
+pub mod report;
 pub mod run;
 pub mod status;

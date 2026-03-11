@@ -21,3 +21,10 @@ project_name = "my-project"
 max_concurrent = 3
 timeout_secs = 300
 max_retries = 2
+
+# Anonymous telemetry via PostHog — disabled by default
+# No PII is ever sent: only event counts, durations, error types, and model names.
+# [telemetry]
+# enabled = true
+# posthog_key = "phc_your_project_key"
+# posthog_host = "https://us.i.posthog.com"  # or your self-hosted instance

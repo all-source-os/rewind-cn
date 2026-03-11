@@ -6,11 +6,8 @@ use rewind_cn_core::application::planning::{passthrough_plan, Plan, PlanGenerato
 use rewind_cn_core::domain::events::{AcceptanceCriterion, RewindEvent};
 use rewind_cn_core::domain::ids::TaskId;
 use rewind_cn_core::infrastructure::engine::RewindEngine;
-use rewind_cn_core::infrastructure::llm::create_anthropic_client;
+use rewind_cn_core::infrastructure::llm::create_planner_client;
 use rewind_cn_core::infrastructure::planner::PlannerAgent;
-
-use rig::completion::Prompt;
-use rig::prelude::CompletionClient;
 
 use crate::config::RewindConfig;
 
@@ -56,7 +53,7 @@ pub async fn execute(
         if let Some(ref cfg) = config {
             if let Some(ref agent_config) = cfg.agent {
                 eprintln!("Using LLM planner ({})...", agent_config.planner.model);
-                let client = create_anthropic_client(agent_config).map_err(|e| e.to_string())?;
+                let client = create_planner_client(agent_config).map_err(|e| e.to_string())?;
                 let planner = PlannerAgent::new(client, agent_config.clone());
                 planner.decompose(&input).await.map_err(|e| e.to_string())?
             } else {
@@ -81,13 +78,7 @@ pub async fn execute(
 async fn interactive_plan(
     agent_config: &rewind_cn_core::infrastructure::llm::AgentConfig,
 ) -> Result<Plan, String> {
-    let client = create_anthropic_client(agent_config).map_err(|e| e.to_string())?;
-
-    let agent = client
-        .agent(&agent_config.planner.model)
-        .preamble(INTERACTIVE_PLANNER_PROMPT)
-        .max_tokens(agent_config.planner.max_tokens as u64)
-        .build();
+    let client = create_planner_client(agent_config).map_err(|e| e.to_string())?;
 
     println!("Interactive planning mode. Describe what you want to build.");
     println!("The planner will ask clarifying questions before generating a plan.");
@@ -117,8 +108,13 @@ async fn interactive_plan(
          Ask 2-3 clarifying questions to understand the scope, then generate the plan."
     );
 
-    let mut last_response: String = agent
-        .prompt(&prompt)
+    let mut last_response: String = client
+        .prompt(
+            &agent_config.planner.model,
+            INTERACTIVE_PLANNER_PROMPT,
+            agent_config.planner.max_tokens as u64,
+            &prompt,
+        )
         .await
         .map_err(|e| format!("Planner error: {e}"))?;
 
@@ -152,8 +148,13 @@ async fn interactive_plan(
                  Now generate the final plan. Output {PLAN_READY_MARKER} followed by the JSON plan."
             );
 
-            last_response = agent
-                .prompt(&final_prompt)
+            last_response = client
+                .prompt(
+                    &agent_config.planner.model,
+                    INTERACTIVE_PLANNER_PROMPT,
+                    agent_config.planner.max_tokens as u64,
+                    &final_prompt,
+                )
                 .await
                 .map_err(|e| format!("Planner error: {e}"))?;
 
@@ -170,8 +171,13 @@ async fn interactive_plan(
              followed by the JSON plan. Otherwise, ask more questions."
         );
 
-        last_response = agent
-            .prompt(&follow_up)
+        last_response = client
+            .prompt(
+                &agent_config.planner.model,
+                INTERACTIVE_PLANNER_PROMPT,
+                agent_config.planner.max_tokens as u64,
+                &follow_up,
+            )
             .await
             .map_err(|e| format!("Planner error: {e}"))?;
     }

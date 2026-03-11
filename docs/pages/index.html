@@ -729,7 +729,7 @@
             <h1>Autonomous Agent Orchestrator</h1>
             <p class="tagline">
                 Decompose requirements into tasks, schedule AI coding agents, and track progress &mdash; all backed by an append-only event store for full auditability.
-                Built on <a href="https://all-source.xyz">AllSource</a> CQRS + Event Sourcing.
+                Multi-provider LLM support (Anthropic, OpenAI). Built on <a href="https://all-source.xyz">AllSource</a> CQRS + Event Sourcing.
             </p>
             <div class="badges">
                 <span class="badge badge-purple">Rust 2024 Edition</span>
@@ -743,8 +743,8 @@
                     <span class="comment"># Initialize a project</span><br>
                     <span class="prompt">$</span> rewind init<br><br>
                     <span class="comment"># Plan and execute</span><br>
-                    <span class="prompt">$</span> rewind plan "Add JWT authentication"<br>
-                    <span class="prompt">$</span> rewind run --max-concurrent 3
+                    <span class="prompt">$</span> rewind plan -f prd.md<br>
+                    <span class="prompt">$</span> rewind run --parallel --tui
                 </code>
             </div>
             <div class="cta-buttons">
@@ -784,12 +784,24 @@
                     <p>Expose capabilities as MCP tools and resources for IDE integration. Supports optional <code>--toon</code> format for ~50% fewer tokens in agent workflows.</p>
                 </div>
                 <div class="feature-card">
-                    <h3>Plan Decomposition <span class="feature-tag tag-core">Core</span></h3>
-                    <p>Turn a PRD or description into an epic with ordered, right-sized tasks. Each task is completable in one agent context window.</p>
+                    <h3>Multi-Provider LLM <span class="feature-tag tag-agent">Agent</span></h3>
+                    <p>Per-role provider configuration: use Anthropic for coding, OpenAI for planning, or any mix. Each role (planner, coder, evaluator) independently configurable. Powered by <a href="https://crates.io/crates/rig-core">rig-core</a>.</p>
                 </div>
                 <div class="feature-card">
-                    <h3>Projections <span class="feature-tag tag-event">Events</span></h3>
-                    <p>BacklogProjection and EpicProgressProjection materialize views from the event stream. No mutable database &mdash; state is always derived.</p>
+                    <h3>TUI Dashboard <span class="feature-tag tag-core">Core</span></h3>
+                    <p>Live terminal dashboard during execution with <code>--tui</code>. See task progress, agent activity, and epic completion in real time.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Git Worktree Parallel <span class="feature-tag tag-agent">Agent</span></h3>
+                    <p>Isolate each agent in its own git worktree with <code>--parallel</code>. True parallel execution without merge conflicts. Changes merge back on task completion.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Beads Import <span class="feature-tag tag-core">Core</span></h3>
+                    <p>Import task hierarchies from chronis/beads JSONL files. Extracts acceptance criteria, quality gates, and dependency graphs automatically.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Execution Analytics <span class="feature-tag tag-event">Events</span></h3>
+                    <p>Query the event store for task timing, tool usage patterns, session history, and epic progress. Built on the same projections that power status.</p>
                 </div>
                 <div class="feature-card">
                     <h3>Claude Code Skills <span class="feature-tag tag-skill">Skills</span></h3>
@@ -890,20 +902,24 @@
                         <td>Execute pending tasks through agent workers</td>
                     </tr>
                     <tr>
-                        <td><code>rewind run --task &lt;id&gt;</code></td>
-                        <td>Run a single specific task</td>
-                    </tr>
-                    <tr>
-                        <td><code>rewind run --max-concurrent &lt;n&gt;</code></td>
-                        <td>Limit parallel agent workers (default: 3)</td>
+                        <td><code>rewind run --parallel --tui</code></td>
+                        <td>Parallel worktrees + live TUI dashboard</td>
                     </tr>
                     <tr>
                         <td><code>rewind status</code></td>
                         <td>Display backlog and epic progress</td>
                     </tr>
                     <tr>
-                        <td><code>rewind status --json</code></td>
-                        <td>Output status as JSON for scripting</td>
+                        <td><code>rewind query &lt;name&gt;</code></td>
+                        <td>Query analytics (task-summary, epic-summary, tool-usage, session-history)</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind import &lt;file&gt;</code></td>
+                        <td>Import epics/tasks from beads JSONL/JSON files</td>
+                    </tr>
+                    <tr>
+                        <td><code>rewind report</code></td>
+                        <td>Export anonymized diagnostic report</td>
                     </tr>
                     <tr>
                         <td><code>rewind mcp</code></td>
@@ -920,7 +936,7 @@
             <h2>Architecture</h2>
             <div class="arch-diagram">
                 <span class="layer">CLI (clap)</span><br>
-                <span class="arrow">&nbsp;&nbsp;init &middot; plan &middot; run &middot; status &middot; mcp</span><br>
+                <span class="arrow">&nbsp;&nbsp;init &middot; plan &middot; run &middot; status &middot; query &middot; import &middot; report &middot; mcp</span><br>
                 <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;|</span><br>
                 <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;v</span><br>
                 <span class="layer">Application Layer</span> <span class="component">(pure sync functions)</span><br>
@@ -1033,7 +1049,7 @@
         <div class="container">
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="value">22+</div>
+                    <div class="value">112</div>
                     <div class="label">Tests Passing</div>
                 </div>
                 <div class="stat-card">
@@ -1046,7 +1062,7 @@
                 </div>
                 <div class="stat-card">
                     <div class="value">2</div>
-                    <div class="label">Claude Skills</div>
+                    <div class="label">LLM Providers</div>
                 </div>
             </div>
         </div>

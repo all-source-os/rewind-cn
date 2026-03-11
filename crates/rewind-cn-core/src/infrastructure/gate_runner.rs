@@ -32,6 +32,7 @@ impl QualityGateRunner {
     }
 
     /// Run a single quality gate command and return the result.
+    #[hotpath::measure]
     pub async fn run_gate(&self, gate: &QualityGate) -> GateResult {
         info!("Running quality gate: {}", gate.command);
 
@@ -86,6 +87,7 @@ impl QualityGateRunner {
     /// Run all epic-level quality gates and emit events.
     ///
     /// Returns true if all gates passed (epic can be completed).
+    #[hotpath::measure]
     pub async fn run_epic_gates<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
         &self,
         epic_id: &EpicId,

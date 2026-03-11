@@ -7,8 +7,10 @@ use rewind_cn_core::domain::events::RewindEvent;
 use rewind_cn_core::domain::ids::TaskId;
 use rewind_cn_core::infrastructure::agent::AgentWorker;
 use rewind_cn_core::infrastructure::engine::RewindEngine;
-use rewind_cn_core::infrastructure::llm::create_anthropic_client;
+use rewind_cn_core::infrastructure::llm::{create_coder_client, create_evaluator_client};
 use rewind_cn_core::infrastructure::orchestrator::Orchestrator;
+
+use rewind_cn_core::infrastructure::telemetry::{TelemetryClient, TelemetryClientConfig};
 
 use crate::config::RewindConfig;
 
@@ -19,6 +21,8 @@ pub async fn execute(
     task_filter: Option<String>,
     dry_run: bool,
     max_concurrent_override: Option<usize>,
+    parallel: bool,
+    use_tui: bool,
 ) -> Result<(), String> {
     if !Path::new(".rewind").exists() {
         return Err("No rewind project found. Run `rewind init` first.".into());
@@ -26,6 +30,15 @@ pub async fn execute(
 
     let config = RewindConfig::load(Path::new(CONFIG_FILE))?;
     let max_concurrent = max_concurrent_override.unwrap_or(config.execution.max_concurrent);
+
+    // Initialize telemetry client
+    let telemetry_id = std::fs::read_to_string(".rewind/telemetry_id").unwrap_or_default();
+    let telemetry = TelemetryClient::new(TelemetryClientConfig {
+        enabled: config.telemetry.enabled,
+        posthog_key: config.telemetry.posthog_key.clone(),
+        posthog_host: config.telemetry.posthog_host.clone(),
+        distinct_id: telemetry_id.trim().to_string(),
+    });
 
     let engine = RewindEngine::load(DATA_DIR)
         .await
@@ -82,11 +95,13 @@ pub async fn execute(
             "Using LLM orchestrator (coder: {}, evaluator: {})",
             agent_config.coder.model, agent_config.evaluator.model
         );
-        let client = create_anthropic_client(agent_config).map_err(|e| e.to_string())?;
+        let coder_client = create_coder_client(agent_config).map_err(|e| e.to_string())?;
+        let evaluator_client = create_evaluator_client(agent_config).map_err(|e| e.to_string())?;
         let work_dir = std::env::current_dir().map_err(|e| e.to_string())?;
 
         let orchestrator = Orchestrator::new(
-            client,
+            coder_client,
+            evaluator_client,
             agent_config.clone(),
             work_dir,
             config.execution.timeout_secs,
@@ -101,15 +116,81 @@ pub async fn execute(
         };
         eprintln!("Session started: {session_id}");
 
-        let (completed, failed) = orchestrator
-            .execute_runnable(&engine, max_concurrent)
-            .await
-            .map_err(|e| e.to_string())?;
+        telemetry
+            .capture_simple(
+                "rewind.session.started",
+                &[
+                    ("version", env!("CARGO_PKG_VERSION")),
+                    ("os", std::env::consts::OS),
+                    ("arch", std::env::consts::ARCH),
+                ],
+            )
+            .await;
 
-        let _ = engine
-            .end_session(EndSession { session_id })
-            .await
-            .map_err(|e| e.to_string())?;
+        let session_start = std::time::Instant::now();
+
+        // Optionally start TUI dashboard
+        let tui_handle = if use_tui {
+            let event_rx = engine.subscribe();
+            Some(tokio::spawn(async move {
+                if let Err(e) = crate::tui::run_dashboard(event_rx).await {
+                    eprintln!("TUI error: {e}");
+                }
+            }))
+        } else {
+            None
+        };
+
+        let (completed, failed) = if parallel {
+            eprintln!("Parallel mode: using git worktrees for isolation");
+            let orchestrator = Arc::new(orchestrator);
+            let engine = Arc::new(engine);
+            let result = orchestrator
+                .execute_parallel(engine.clone(), max_concurrent)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let _ = engine
+                .end_session(EndSession {
+                    session_id: session_id.clone(),
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            result
+        } else {
+            let result = orchestrator
+                .execute_runnable(&engine, max_concurrent)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let _ = engine
+                .end_session(EndSession { session_id })
+                .await
+                .map_err(|e| e.to_string())?;
+
+            result
+        };
+
+        let duration_ms = session_start.elapsed().as_millis().to_string();
+        telemetry
+            .capture_simple(
+                "rewind.session.completed",
+                &[
+                    ("version", env!("CARGO_PKG_VERSION")),
+                    ("tasks_completed", &completed.to_string()),
+                    ("tasks_failed", &failed.to_string()),
+                    ("duration_ms", &duration_ms),
+                    ("parallel", if parallel { "true" } else { "false" }),
+                ],
+            )
+            .await;
+        telemetry.flush().await;
+
+        // Wait for TUI to finish (user presses 'q')
+        if let Some(handle) = tui_handle {
+            let _ = handle.await;
+        }
 
         println!(
             "Session complete: {} task(s) executed ({} passed, {} failed)",

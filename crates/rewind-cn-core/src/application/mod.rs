@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod commands;
 pub mod handlers;
 pub mod planning;

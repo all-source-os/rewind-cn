@@ -19,6 +19,9 @@ pub struct RewindConfig {
 
     #[serde(default)]
     pub execution: ExecutionConfig,
+
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
 }
 
 fn default_project_name() -> String {
@@ -42,6 +45,35 @@ pub struct ExecutionConfig {
 
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TelemetryConfig {
+    /// Enable anonymous telemetry (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// PostHog project API key
+    #[serde(default)]
+    pub posthog_key: Option<String>,
+
+    /// PostHog host (default: https://us.i.posthog.com)
+    #[serde(default = "default_posthog_host")]
+    pub posthog_host: String,
+}
+
+fn default_posthog_host() -> String {
+    "https://us.i.posthog.com".into()
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            posthog_key: None,
+            posthog_host: default_posthog_host(),
+        }
+    }
 }
 
 fn default_max_concurrent() -> usize {
@@ -73,6 +105,7 @@ impl Default for RewindConfig {
             llm: LlmConfig::default(),
             agent: None,
             execution: ExecutionConfig::default(),
+            telemetry: TelemetryConfig::default(),
         }
     }
 }
@@ -143,14 +176,42 @@ mod tests {
         "#;
 
         let config: RewindConfig = toml::from_str(toml_str).unwrap();
-        assert!(!config.agent.is_some());
+        assert!(config.agent.is_none());
         assert_eq!(config.llm.provider, Some("anthropic".into()));
     }
 
     #[test]
     fn default_config_has_no_agent() {
         let config = RewindConfig::default();
-        assert!(!config.agent.is_some());
+        assert!(config.agent.is_none());
         assert_eq!(config.execution.max_retries, 2);
+    }
+
+    #[test]
+    fn default_config_has_telemetry_disabled() {
+        let config = RewindConfig::default();
+        assert!(!config.telemetry.enabled);
+        assert!(config.telemetry.posthog_key.is_none());
+        assert_eq!(config.telemetry.posthog_host, "https://us.i.posthog.com");
+    }
+
+    #[test]
+    fn parse_config_with_telemetry() {
+        let toml_str = r#"
+            project_name = "test"
+
+            [telemetry]
+            enabled = true
+            posthog_key = "phc_test123"
+            posthog_host = "https://selfhosted.example.com"
+        "#;
+
+        let config: RewindConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.telemetry.enabled);
+        assert_eq!(config.telemetry.posthog_key, Some("phc_test123".into()));
+        assert_eq!(
+            config.telemetry.posthog_host,
+            "https://selfhosted.example.com"
+        );
     }
 }

@@ -1,13 +1,10 @@
-use rig::completion::Prompt;
-use rig::prelude::CompletionClient;
-use rig::providers::anthropic;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::error::RewindError;
 use crate::domain::events::AcceptanceCriterion;
 use crate::infrastructure::coder::ToolCallRecord;
-use crate::infrastructure::llm::AgentConfig;
+use crate::infrastructure::llm::{AgentConfig, ProviderClient};
 
 /// Result of evaluating a single acceptance criterion.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -63,16 +60,17 @@ Return ONLY a JSON object with this exact structure (no markdown, no code fences
 
 /// LLM-powered evaluator agent that judges task completion.
 pub struct EvaluatorAgent {
-    client: anthropic::Client,
+    client: ProviderClient,
     config: AgentConfig,
 }
 
 impl EvaluatorAgent {
-    pub fn new(client: anthropic::Client, config: AgentConfig) -> Self {
+    pub fn new(client: ProviderClient, config: AgentConfig) -> Self {
         Self { client, config }
     }
 
     /// Evaluate whether the coder agent successfully completed the task.
+    #[hotpath::measure]
     pub async fn evaluate(
         &self,
         task_description: &str,
@@ -80,13 +78,6 @@ impl EvaluatorAgent {
         tool_calls: &[ToolCallRecord],
         agent_output: &str,
     ) -> Result<EvaluationResult, RewindError> {
-        let agent = self
-            .client
-            .agent(&self.config.evaluator.model)
-            .preamble(EVALUATOR_SYSTEM_PROMPT)
-            .max_tokens(self.config.evaluator.max_tokens as u64)
-            .build();
-
         let eval_input = build_eval_input(
             task_description,
             acceptance_criteria,
@@ -94,10 +85,15 @@ impl EvaluatorAgent {
             agent_output,
         );
 
-        let response: String = agent
-            .prompt(&eval_input)
-            .await
-            .map_err(|e| RewindError::Config(format!("Evaluator LLM call failed: {e}")))?;
+        let response: String = self
+            .client
+            .prompt(
+                &self.config.evaluator.model,
+                EVALUATOR_SYSTEM_PROMPT,
+                self.config.evaluator.max_tokens as u64,
+                &eval_input,
+            )
+            .await?;
 
         // Strip markdown code fences if present
         let trimmed = response.trim();

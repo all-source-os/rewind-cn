@@ -3,14 +3,13 @@ use std::sync::Arc;
 
 use rig::completion::{Prompt, ToolDefinition};
 use rig::prelude::CompletionClient;
-use rig::providers::anthropic;
 use rig::tool::Tool;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::domain::error::RewindError;
 use crate::domain::events::AcceptanceCriterion;
-use crate::infrastructure::llm::AgentConfig;
+use crate::infrastructure::llm::{AgentConfig, ProviderClient};
 
 /// A recorded tool call for audit trail.
 #[derive(Debug, Clone)]
@@ -73,6 +72,7 @@ impl Tool for ReadFileTool {
         }
     }
 
+    #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let full_path = self.work_dir.join(&args.path);
         let content = tokio::fs::read_to_string(&full_path)
@@ -137,6 +137,7 @@ impl Tool for WriteFileTool {
         }
     }
 
+    #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let full_path = self.work_dir.join(&args.path);
         if let Some(parent) = full_path.parent() {
@@ -208,6 +209,7 @@ impl Tool for ListFilesTool {
         }
     }
 
+    #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let dir = if args.path.is_empty() {
             self.work_dir.clone()
@@ -313,6 +315,7 @@ impl Tool for SearchCodeTool {
         }
     }
 
+    #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let search_path = match &args.path {
             Some(p) => self.work_dir.join(p),
@@ -413,6 +416,7 @@ impl Tool for RunCommandTool {
         }
     }
 
+    #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let child = tokio::process::Command::new("sh")
             .args(["-c", &args.command])
@@ -500,18 +504,19 @@ fn build_coder_prompt(
 
 /// LLM-powered coder agent using rig-core with tool-use.
 pub struct CoderAgent {
-    client: anthropic::Client,
+    client: ProviderClient,
     config: AgentConfig,
 }
 
 impl CoderAgent {
-    pub fn new(client: anthropic::Client, config: AgentConfig) -> Self {
+    pub fn new(client: ProviderClient, config: AgentConfig) -> Self {
         Self { client, config }
     }
 
     /// Execute a task using the coder agent with tool-use loop.
     ///
     /// Returns the tool call log and the agent's final response.
+    #[hotpath::measure]
     pub async fn execute_task(
         &self,
         task_title: &str,
@@ -523,24 +528,44 @@ impl CoderAgent {
         let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
 
         let system_prompt = build_coder_prompt(task_title, task_description, acceptance_criteria);
+        let prompt_input = "Begin working on the task. Read relevant files, implement changes, and verify each acceptance criterion.";
 
-        let agent = self
-            .client
-            .agent(&self.config.coder.model)
-            .preamble(&system_prompt)
-            .max_tokens(self.config.coder.max_tokens as u64)
-            .tool(ReadFileTool::new(work_dir.clone(), log.clone()))
-            .tool(WriteFileTool::new(work_dir.clone(), log.clone()))
-            .tool(ListFilesTool::new(work_dir.clone(), log.clone()))
-            .tool(SearchCodeTool::new(work_dir.clone(), log.clone()))
-            .tool(RunCommandTool::new(work_dir, timeout_secs, log.clone()))
-            .build();
-
-        let response: String = agent
-            .prompt("Begin working on the task. Read relevant files, implement changes, and verify each acceptance criterion.")
-            .max_turns(20)
-            .await
-            .map_err(|e| RewindError::Config(format!("Coder agent failed: {e}")))?;
+        let response: String = match &self.client {
+            ProviderClient::Anthropic(c) => {
+                let agent = c
+                    .agent(&self.config.coder.model)
+                    .preamble(&system_prompt)
+                    .max_tokens(self.config.coder.max_tokens as u64)
+                    .tool(ReadFileTool::new(work_dir.clone(), log.clone()))
+                    .tool(WriteFileTool::new(work_dir.clone(), log.clone()))
+                    .tool(ListFilesTool::new(work_dir.clone(), log.clone()))
+                    .tool(SearchCodeTool::new(work_dir.clone(), log.clone()))
+                    .tool(RunCommandTool::new(work_dir, timeout_secs, log.clone()))
+                    .build();
+                agent
+                    .prompt(prompt_input)
+                    .max_turns(20)
+                    .await
+                    .map_err(|e| RewindError::Config(format!("Coder agent failed: {e}")))?
+            }
+            ProviderClient::OpenAI(c) => {
+                let agent = c
+                    .agent(&self.config.coder.model)
+                    .preamble(&system_prompt)
+                    .max_tokens(self.config.coder.max_tokens as u64)
+                    .tool(ReadFileTool::new(work_dir.clone(), log.clone()))
+                    .tool(WriteFileTool::new(work_dir.clone(), log.clone()))
+                    .tool(ListFilesTool::new(work_dir.clone(), log.clone()))
+                    .tool(SearchCodeTool::new(work_dir.clone(), log.clone()))
+                    .tool(RunCommandTool::new(work_dir, timeout_secs, log.clone()))
+                    .build();
+                agent
+                    .prompt(prompt_input)
+                    .max_turns(20)
+                    .await
+                    .map_err(|e| RewindError::Config(format!("Coder agent failed: {e}")))?
+            }
+        };
 
         let records = log.lock().await.clone();
         Ok((records, response))

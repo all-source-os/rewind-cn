@@ -11,9 +11,12 @@ name = "rewind"
 path = "src/main.rs"
 
 [dependencies]
-rewind-cn-core = { version = "0.1.0", path = "../rewind-cn-core" }
+rewind-cn-core = { version = "0.2.0", path = "../rewind-cn-core" }
 atty = "0.2"
+chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+ratatui = "0.29"
 rig-core = "0.32"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
@@ -21,3 +24,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+hotpath = "0.14"
+sha2 = "0.10.9"
+hex = "0.4.3"
+uuid = { version = "1.22.0", features = ["v4"] }
+
+[features]
+hotpath = ["hotpath/hotpath", "rewind-cn-core/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc", "rewind-cn-core/hotpath-alloc"]
+telemetry = ["rewind-cn-core/telemetry"]

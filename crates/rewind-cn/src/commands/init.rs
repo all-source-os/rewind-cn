@@ -23,6 +23,12 @@ pub async fn execute() -> Result<(), String> {
     let config = RewindConfig::default();
     config.save(Path::new(CONFIG_FILE))?;
 
+    // Generate anonymous telemetry ID
+    let telemetry_id = uuid::Uuid::new_v4().to_string();
+    let telemetry_id_path = Path::new(REWIND_DIR).join("telemetry_id");
+    std::fs::write(&telemetry_id_path, &telemetry_id)
+        .map_err(|e| format!("Failed to write telemetry ID: {e}"))?;
+
     // Initialize the engine (creates event store)
     let _engine = rewind_cn_core::infrastructure::engine::RewindEngine::init(DATA_DIR)
         .await

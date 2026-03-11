@@ -1,11 +1,8 @@
 use async_trait::async_trait;
-use rig::completion::Prompt;
-use rig::prelude::CompletionClient;
-use rig::providers::anthropic;
 
 use crate::application::planning::{Plan, PlanGenerator};
 use crate::domain::error::RewindError;
-use crate::infrastructure::llm::AgentConfig;
+use crate::infrastructure::llm::{AgentConfig, ProviderClient};
 
 const PLANNER_SYSTEM_PROMPT: &str = r#"You are a software project planner. Given a feature description or PRD, decompose it into an epic with child stories.
 
@@ -56,30 +53,29 @@ Return ONLY a JSON object with this exact structure (no markdown, no code fences
 
 /// LLM-powered plan generator using rig-core.
 pub struct PlannerAgent {
-    client: anthropic::Client,
+    client: ProviderClient,
     config: AgentConfig,
 }
 
 impl PlannerAgent {
-    pub fn new(client: anthropic::Client, config: AgentConfig) -> Self {
+    pub fn new(client: ProviderClient, config: AgentConfig) -> Self {
         Self { client, config }
     }
 }
 
 #[async_trait]
 impl PlanGenerator for PlannerAgent {
+    #[hotpath::measure]
     async fn decompose(&self, input: &str) -> Result<Plan, RewindError> {
-        let agent = self
+        let response: String = self
             .client
-            .agent(&self.config.planner.model)
-            .preamble(PLANNER_SYSTEM_PROMPT)
-            .max_tokens(self.config.planner.max_tokens as u64)
-            .build();
-
-        let response: String = agent
-            .prompt(input)
-            .await
-            .map_err(|e| RewindError::Config(format!("Planner LLM call failed: {e}")))?;
+            .prompt(
+                &self.config.planner.model,
+                PLANNER_SYSTEM_PROMPT,
+                self.config.planner.max_tokens as u64,
+                input,
+            )
+            .await?;
 
         // Strip markdown code fences if present
         let trimmed = response.trim();
