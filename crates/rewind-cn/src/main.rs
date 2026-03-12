@@ -8,7 +8,7 @@ mod config;
 mod tui;
 
 #[derive(Parser)]
-#[command(name = "rewind", about = "Autonomous coding agent orchestrator")]
+#[command(name = "rewind", about = "Autonomous coding agent orchestrator", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -18,9 +18,9 @@ struct Cli {
 enum Commands {
     /// Initialize a new rewind project in the current directory
     Init,
-    /// Generate an execution plan from a PRD or task description
+    /// Generate tasks from a description or PRD (requires [agent] config for LLM decomposition)
     Plan {
-        /// Task or PRD description
+        /// Task or PRD description (e.g. "Build a REST API for users")
         description: Option<String>,
         /// Read description from file
         #[arg(short, long)]
@@ -29,7 +29,7 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Execute the current plan with agent workers
+    /// Execute pending tasks with agent workers (requires [agent] config for LLM execution)
     Run {
         /// Run a single specific task by ID
         #[arg(long)]

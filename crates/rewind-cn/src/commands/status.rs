@@ -30,6 +30,13 @@ pub async fn execute(json: bool) -> Result<(), String> {
         let output = serde_json::to_string_pretty(&summary)
             .map_err(|e| format!("Failed to serialize: {e}"))?;
         println!("{output}");
+    } else if summary.total_tasks == 0 {
+        println!("No tasks yet.");
+        println!();
+        println!("Get started:");
+        println!("  rewind plan \"Build a REST API\"   Create tasks from a description");
+        println!("  rewind plan -f docs/prd.md        Create tasks from a PRD file");
+        println!("  rewind import tasks.jsonl          Import beads from chronis");
     } else {
         println!("Tasks: {} total", summary.total_tasks);
 

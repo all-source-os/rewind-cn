@@ -18,5 +18,8 @@ pub async fn execute() -> Result<(), String> {
 
     let server = RewindMcpServer::new(Arc::new(engine), CONFIG_FILE.into());
 
+    eprintln!("MCP server running on stdin/stdout. Connect your IDE to use rewind tools.");
+    eprintln!("Press Ctrl+C to stop.");
+
     server.run().await.map_err(|e| e.to_string())
 }

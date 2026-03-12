@@ -39,7 +39,15 @@ pub async fn execute() -> Result<(), String> {
     println!("  Config: {CONFIG_FILE}");
     println!("  Data:   {DATA_DIR}/");
     println!();
-    println!("Edit .rewind/rewind.toml to configure your project.");
+    println!("Next steps:");
+    println!("  1. Configure LLM in .rewind/rewind.toml (add [agent] section)");
+    println!("  2. Create a plan:  rewind plan \"Build a REST API for users\"");
+    println!("     Or from a file: rewind plan -f docs/prd.md");
+    println!("     Or import beads: rewind import tasks.jsonl");
+    println!("  3. Run tasks:      rewind run");
+    println!();
+    println!("Without [agent] config, `plan` creates a single passthrough task.");
+    println!("See: rewind plan --help, rewind run --help");
 
     Ok(())
 }
