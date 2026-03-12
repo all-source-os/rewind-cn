@@ -1,14 +1,15 @@
 {
   "id": "d34a24b9-3415-4a03-8832-4a246949406e",
-  "status": "running",
+  "status": "completed",
   "startedAt": "2026-03-12T17:14:32.690Z",
-  "updatedAt": "2026-03-12T17:52:27.117Z",
+  "updatedAt": "2026-03-12T18:01:08.069Z",
   "agentPlugin": "claude",
   "trackerPlugin": "json",
   "prdPath": "./tasks/prd.json",
-  "currentIteration": 11,
+  "currentIteration": 12,
   "maxIterations": 0,
   "totalTasks": 0,
-  "tasksCompleted": 11,
-  "cwd": "/Users/decebaldobrica/Projects/chronos/rewind-cn"
+  "tasksCompleted": 12,
+  "cwd": "/Users/decebaldobrica/Projects/chronos/rewind-cn",
+  "endedAt": "2026-03-12T18:01:08.069Z"
 }
