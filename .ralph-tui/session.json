@@ -3,10 +3,10 @@
   "sessionId": "d34a24b9-3415-4a03-8832-4a246949406e",
   "status": "running",
   "startedAt": "2026-03-12T17:14:32.755Z",
-  "updatedAt": "2026-03-12T17:32:00.116Z",
-  "currentIteration": 5,
+  "updatedAt": "2026-03-12T17:36:18.063Z",
+  "currentIteration": 6,
   "maxIterations": 0,
-  "tasksCompleted": 5,
+  "tasksCompleted": 6,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -29,8 +29,8 @@
       {
         "id": "US-003",
         "title": "Wire prompt template into coder agent",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-004",
@@ -138,6 +138,16 @@
       "durationMs": 112687,
       "startedAt": "2026-03-12T17:24:30.564Z",
       "endedAt": "2026-03-12T17:26:23.251Z"
+    },
+    {
+      "iteration": 6,
+      "status": "completed",
+      "taskId": "US-003",
+      "taskTitle": "Wire prompt template into coder agent",
+      "taskCompleted": true,
+      "durationMs": 335767,
+      "startedAt": "2026-03-12T17:26:24.346Z",
+      "endedAt": "2026-03-12T17:32:00.113Z"
     }
   ],
   "skippedTaskIds": [],
