@@ -3,10 +3,10 @@
   "sessionId": "d34a24b9-3415-4a03-8832-4a246949406e",
   "status": "running",
   "startedAt": "2026-03-12T17:14:32.755Z",
-  "updatedAt": "2026-03-12T17:18:34.708Z",
-  "currentIteration": 0,
+  "updatedAt": "2026-03-12T17:20:21.768Z",
+  "currentIteration": 1,
   "maxIterations": 0,
-  "tasksCompleted": 0,
+  "tasksCompleted": 1,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -17,8 +17,8 @@
       {
         "id": "US-001",
         "title": "Add Tera prompt template engine",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-002",
@@ -88,7 +88,18 @@
       }
     ]
   },
-  "iterations": [],
+  "iterations": [
+    {
+      "iteration": 1,
+      "status": "completed",
+      "taskId": "US-001",
+      "taskTitle": "Add Tera prompt template engine",
+      "taskCompleted": true,
+      "durationMs": 239882,
+      "startedAt": "2026-03-12T17:14:34.824Z",
+      "endedAt": "2026-03-12T17:18:34.706Z"
+    }
+  ],
   "skippedTaskIds": [],
   "cwd": "/Users/decebaldobrica/Projects/chronos/rewind-cn",
   "activeTaskIds": [],
