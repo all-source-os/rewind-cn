@@ -23,6 +23,9 @@ pub enum GateTier {
     Story,
 }
 
+/// Alias used by the gate runner to select which tier to execute.
+pub type QualityGateLevel = GateTier;
+
 /// A quality gate — a command that validates the codebase.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct QualityGate {
