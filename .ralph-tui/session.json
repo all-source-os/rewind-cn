@@ -3,10 +3,10 @@
   "sessionId": "d34a24b9-3415-4a03-8832-4a246949406e",
   "status": "running",
   "startedAt": "2026-03-12T17:14:32.755Z",
-  "updatedAt": "2026-03-12T17:20:21.768Z",
-  "currentIteration": 1,
+  "updatedAt": "2026-03-12T17:23:32.523Z",
+  "currentIteration": 2,
   "maxIterations": 0,
-  "tasksCompleted": 1,
+  "tasksCompleted": 2,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -23,8 +23,8 @@
       {
         "id": "US-002",
         "title": "Create default prompt template",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-003",
@@ -98,6 +98,16 @@
       "durationMs": 239882,
       "startedAt": "2026-03-12T17:14:34.824Z",
       "endedAt": "2026-03-12T17:18:34.706Z"
+    },
+    {
+      "iteration": 2,
+      "status": "completed",
+      "taskId": "US-002",
+      "taskTitle": "Create default prompt template",
+      "taskCompleted": true,
+      "durationMs": 105957,
+      "startedAt": "2026-03-12T17:18:35.809Z",
+      "endedAt": "2026-03-12T17:20:21.766Z"
     }
   ],
   "skippedTaskIds": [],
