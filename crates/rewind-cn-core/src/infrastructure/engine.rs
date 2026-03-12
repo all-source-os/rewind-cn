@@ -281,7 +281,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
 mod tests {
     use super::*;
     use crate::application::commands::{AssignTask, CompleteTask, CreateTask, StartTask};
-    use crate::domain::ids::AgentId;
+    use crate::domain::ids::{AgentId, SessionId};
     use crate::domain::model::TaskStatus;
 
     #[tokio::test]
@@ -382,6 +382,8 @@ mod tests {
         engine
             .complete_task(CompleteTask {
                 task_id: task_id.clone(),
+                session_id: SessionId::generate(),
+                discretionary_note: None,
             })
             .await
             .unwrap();

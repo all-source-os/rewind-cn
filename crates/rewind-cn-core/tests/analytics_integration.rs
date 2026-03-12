@@ -4,7 +4,7 @@ use rewind_cn_core::application::commands::{
     AssignTask, CompleteTask, CreateEpic, CreateTask, EndSession, FailTask, StartTask,
 };
 use rewind_cn_core::domain::events::{AcceptanceCriterion, GateTier, QualityGate, RewindEvent};
-use rewind_cn_core::domain::ids::AgentId;
+use rewind_cn_core::domain::ids::{AgentId, SessionId};
 use rewind_cn_core::infrastructure::engine::RewindEngine;
 
 use chrono::Utc;
@@ -147,6 +147,8 @@ async fn populated_engine() -> RewindEngine<allframe::cqrs::InMemoryBackend<Rewi
     engine
         .complete_task(CompleteTask {
             task_id: task_ids[0].clone(),
+            session_id: SessionId::generate(),
+            discretionary_note: None,
         })
         .await
         .unwrap();
@@ -181,7 +183,9 @@ async fn populated_engine() -> RewindEngine<allframe::cqrs::InMemoryBackend<Rewi
     engine
         .fail_task(FailTask {
             task_id: task_ids[1].clone(),
+            session_id: SessionId::generate(),
             reason: "Tests failed: 2 assertions".into(),
+            discretionary_note: None,
         })
         .await
         .unwrap();

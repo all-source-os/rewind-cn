@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 use crate::application::commands::{AssignTask, CompleteTask, FailTask, StartTask};
 use crate::domain::error::RewindError;
 use crate::domain::events::RewindEvent;
-use crate::domain::ids::{AgentId, TaskId};
+use crate::domain::ids::{AgentId, SessionId, TaskId};
 use crate::domain::model::TaskView;
 use crate::infrastructure::chronis::ChronisBridge;
 use crate::infrastructure::coder::{CoderAgent, PromptContext, ToolCallRecord};
@@ -185,6 +185,8 @@ impl Orchestrator {
             engine
                 .complete_task(CompleteTask {
                     task_id: task_id.clone(),
+                    session_id: SessionId::generate(),
+                    discretionary_note: None,
                 })
                 .await?;
 
@@ -214,7 +216,9 @@ impl Orchestrator {
             engine
                 .fail_task(FailTask {
                     task_id: task_id.clone(),
+                    session_id: SessionId::generate(),
                     reason: reason.clone(),
+                    discretionary_note: None,
                 })
                 .await?;
 
@@ -377,6 +381,8 @@ impl Orchestrator {
             engine
                 .complete_task(CompleteTask {
                     task_id: task_id.clone(),
+                    session_id: SessionId::generate(),
+                    discretionary_note: None,
                 })
                 .await?;
 
@@ -405,7 +411,9 @@ impl Orchestrator {
             engine
                 .fail_task(FailTask {
                     task_id: task_id.clone(),
+                    session_id: SessionId::generate(),
                     reason: reason.clone(),
+                    discretionary_note: None,
                 })
                 .await?;
 

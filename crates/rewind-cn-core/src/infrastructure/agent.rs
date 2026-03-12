@@ -3,7 +3,7 @@ use tracing::{debug, info, warn};
 use crate::application::commands::{AssignTask, CompleteTask, FailTask, StartTask};
 use crate::domain::error::RewindError;
 use crate::domain::events::RewindEvent;
-use crate::domain::ids::{AgentId, TaskId};
+use crate::domain::ids::{AgentId, SessionId, TaskId};
 
 use super::chronis::ChronisBridge;
 use super::engine::RewindEngine;
@@ -80,6 +80,8 @@ impl AgentWorker {
         match engine
             .complete_task(CompleteTask {
                 task_id: task_id.clone(),
+                session_id: SessionId::generate(),
+                discretionary_note: None,
             })
             .await
         {
@@ -101,7 +103,9 @@ impl AgentWorker {
                 let _ = engine
                     .fail_task(FailTask {
                         task_id,
+                        session_id: SessionId::generate(),
                         reason: e.to_string(),
+                        discretionary_note: None,
                     })
                     .await;
                 Err(e)

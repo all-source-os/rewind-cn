@@ -1,7 +1,7 @@
 use chrono::Utc;
 
 use crate::domain::error::RewindError;
-use crate::domain::events::RewindEvent;
+use crate::domain::events::{ProgressNoteType, RewindEvent};
 use crate::domain::ids::{EpicId, SessionId, TaskId};
 
 use super::commands::*;
@@ -47,18 +47,48 @@ pub fn handle_start_task(cmd: StartTask) -> Result<Vec<RewindEvent>, RewindError
 }
 
 pub fn handle_complete_task(cmd: CompleteTask) -> Result<Vec<RewindEvent>, RewindError> {
-    Ok(vec![RewindEvent::TaskCompleted {
-        task_id: cmd.task_id,
+    let mut events = vec![RewindEvent::TaskCompleted {
+        task_id: cmd.task_id.clone(),
         completed_at: Utc::now(),
-    }])
+    }];
+    events.push(RewindEvent::ProgressNoted {
+        session_id: cmd.session_id.clone(),
+        task_id: Some(cmd.task_id.clone()),
+        note: format!("Task {} completed", cmd.task_id),
+        note_type: ProgressNoteType::TaskCompleted,
+    });
+    if let Some(note) = cmd.discretionary_note {
+        events.push(RewindEvent::ProgressNoted {
+            session_id: cmd.session_id,
+            task_id: Some(cmd.task_id),
+            note,
+            note_type: ProgressNoteType::Discretionary,
+        });
+    }
+    Ok(events)
 }
 
 pub fn handle_fail_task(cmd: FailTask) -> Result<Vec<RewindEvent>, RewindError> {
-    Ok(vec![RewindEvent::TaskFailed {
-        task_id: cmd.task_id,
-        reason: cmd.reason,
+    let mut events = vec![RewindEvent::TaskFailed {
+        task_id: cmd.task_id.clone(),
+        reason: cmd.reason.clone(),
         failed_at: Utc::now(),
-    }])
+    }];
+    events.push(RewindEvent::ProgressNoted {
+        session_id: cmd.session_id.clone(),
+        task_id: Some(cmd.task_id.clone()),
+        note: format!("Task {} failed: {}", cmd.task_id, cmd.reason),
+        note_type: ProgressNoteType::TaskFailed,
+    });
+    if let Some(note) = cmd.discretionary_note {
+        events.push(RewindEvent::ProgressNoted {
+            session_id: cmd.session_id,
+            task_id: Some(cmd.task_id),
+            note,
+            note_type: ProgressNoteType::Discretionary,
+        });
+    }
+    Ok(events)
 }
 
 pub fn handle_create_epic(cmd: CreateEpic) -> Result<Vec<RewindEvent>, RewindError> {
@@ -173,5 +203,101 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         matches!(&events[0], RewindEvent::SessionStarted { .. });
+    }
+
+    #[test]
+    fn complete_task_emits_progress_noted() {
+        let events = handle_complete_task(CompleteTask {
+            task_id: TaskId::new("t-1"),
+            session_id: SessionId::new("s-1"),
+            discretionary_note: None,
+        })
+        .unwrap();
+
+        assert_eq!(events.len(), 2);
+        matches!(&events[0], RewindEvent::TaskCompleted { .. });
+        match &events[1] {
+            RewindEvent::ProgressNoted { note_type, .. } => {
+                assert_eq!(note_type, &ProgressNoteType::TaskCompleted);
+            }
+            _ => panic!("Expected ProgressNoted"),
+        }
+    }
+
+    #[test]
+    fn complete_task_with_discretionary_note() {
+        let events = handle_complete_task(CompleteTask {
+            task_id: TaskId::new("t-1"),
+            session_id: SessionId::new("s-1"),
+            discretionary_note: Some("Learned about caching".into()),
+        })
+        .unwrap();
+
+        assert_eq!(events.len(), 3);
+        matches!(&events[0], RewindEvent::TaskCompleted { .. });
+        match &events[1] {
+            RewindEvent::ProgressNoted { note_type, .. } => {
+                assert_eq!(note_type, &ProgressNoteType::TaskCompleted);
+            }
+            _ => panic!("Expected ProgressNoted TaskCompleted"),
+        }
+        match &events[2] {
+            RewindEvent::ProgressNoted {
+                note_type, note, ..
+            } => {
+                assert_eq!(note_type, &ProgressNoteType::Discretionary);
+                assert_eq!(note, "Learned about caching");
+            }
+            _ => panic!("Expected ProgressNoted Discretionary"),
+        }
+    }
+
+    #[test]
+    fn fail_task_emits_progress_noted() {
+        let events = handle_fail_task(FailTask {
+            task_id: TaskId::new("t-1"),
+            session_id: SessionId::new("s-1"),
+            reason: "Tests failed".into(),
+            discretionary_note: None,
+        })
+        .unwrap();
+
+        assert_eq!(events.len(), 2);
+        matches!(&events[0], RewindEvent::TaskFailed { .. });
+        match &events[1] {
+            RewindEvent::ProgressNoted { note_type, .. } => {
+                assert_eq!(note_type, &ProgressNoteType::TaskFailed);
+            }
+            _ => panic!("Expected ProgressNoted"),
+        }
+    }
+
+    #[test]
+    fn fail_task_with_discretionary_note() {
+        let events = handle_fail_task(FailTask {
+            task_id: TaskId::new("t-1"),
+            session_id: SessionId::new("s-1"),
+            reason: "Compilation error".into(),
+            discretionary_note: Some("Need to check imports".into()),
+        })
+        .unwrap();
+
+        assert_eq!(events.len(), 3);
+        matches!(&events[0], RewindEvent::TaskFailed { .. });
+        match &events[1] {
+            RewindEvent::ProgressNoted { note_type, .. } => {
+                assert_eq!(note_type, &ProgressNoteType::TaskFailed);
+            }
+            _ => panic!("Expected ProgressNoted TaskFailed"),
+        }
+        match &events[2] {
+            RewindEvent::ProgressNoted {
+                note_type, note, ..
+            } => {
+                assert_eq!(note_type, &ProgressNoteType::Discretionary);
+                assert_eq!(note, "Need to check imports");
+            }
+            _ => panic!("Expected ProgressNoted Discretionary"),
+        }
     }
 }

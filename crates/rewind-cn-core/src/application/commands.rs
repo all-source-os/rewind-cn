@@ -21,11 +21,15 @@ pub struct StartTask {
 
 pub struct CompleteTask {
     pub task_id: TaskId,
+    pub session_id: SessionId,
+    pub discretionary_note: Option<String>,
 }
 
 pub struct FailTask {
     pub task_id: TaskId,
+    pub session_id: SessionId,
     pub reason: String,
+    pub discretionary_note: Option<String>,
 }
 
 pub struct CreateEpic {
