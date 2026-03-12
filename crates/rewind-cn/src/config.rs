@@ -1,6 +1,35 @@
 use rewind_cn_core::infrastructure::llm::AgentConfig;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TracingDetail {
+    Minimal,
+    Normal,
+    Verbose,
+}
+
+impl Default for TracingDetail {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct GateConfig {
+    #[serde(default)]
+    pub commands: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct GatesConfig {
+    #[serde(default)]
+    pub epic: GateConfig,
+
+    #[serde(default)]
+    pub story: GateConfig,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RewindConfig {
@@ -22,6 +51,22 @@ pub struct RewindConfig {
 
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+
+    /// Path to a custom .tera prompt template file.
+    #[serde(default)]
+    pub prompt_template: Option<PathBuf>,
+
+    /// Maximum number of agent iterations per task.
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+
+    /// Level of detail for subagent tracing output.
+    #[serde(default)]
+    pub subagent_tracing_detail: TracingDetail,
+
+    /// Gate commands that must pass before completion.
+    #[serde(default)]
+    pub gates: GatesConfig,
 }
 
 fn default_project_name() -> String {
@@ -88,6 +133,10 @@ fn default_max_retries() -> u32 {
     2
 }
 
+fn default_max_iterations() -> u32 {
+    10
+}
+
 impl Default for ExecutionConfig {
     fn default() -> Self {
         Self {
@@ -106,6 +155,10 @@ impl Default for RewindConfig {
             agent: None,
             execution: ExecutionConfig::default(),
             telemetry: TelemetryConfig::default(),
+            prompt_template: None,
+            max_iterations: default_max_iterations(),
+            subagent_tracing_detail: TracingDetail::default(),
+            gates: GatesConfig::default(),
         }
     }
 }
@@ -213,5 +266,45 @@ mod tests {
             config.telemetry.posthog_host,
             "https://selfhosted.example.com"
         );
+    }
+
+    #[test]
+    fn parse_config_with_all_new_fields() {
+        let toml_str = r#"
+            project_name = "full-config"
+            prompt_template = "prompts/custom.tera"
+            max_iterations = 25
+            subagent_tracing_detail = "verbose"
+
+            [gates.epic]
+            commands = ["cargo test", "cargo clippy"]
+
+            [gates.story]
+            commands = ["cargo check"]
+        "#;
+
+        let config: RewindConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.prompt_template,
+            Some(PathBuf::from("prompts/custom.tera"))
+        );
+        assert_eq!(config.max_iterations, 25);
+        assert_eq!(config.subagent_tracing_detail, TracingDetail::Verbose);
+        assert_eq!(config.gates.epic.commands, vec!["cargo test", "cargo clippy"]);
+        assert_eq!(config.gates.story.commands, vec!["cargo check"]);
+    }
+
+    #[test]
+    fn parse_config_with_no_new_fields_applies_defaults() {
+        let toml_str = r#"
+            project_name = "minimal"
+        "#;
+
+        let config: RewindConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.prompt_template, None);
+        assert_eq!(config.max_iterations, 10);
+        assert_eq!(config.subagent_tracing_detail, TracingDetail::Normal);
+        assert!(config.gates.epic.commands.is_empty());
+        assert!(config.gates.story.commands.is_empty());
     }
 }
