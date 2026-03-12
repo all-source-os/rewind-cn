@@ -1,3 +1,4 @@
+use crate::application::analytics::IterationLog;
 use crate::application::status::StatusSummary;
 use crate::domain::model::TaskView;
 
@@ -94,6 +95,29 @@ pub fn format_status(summary: &StatusSummary) -> String {
         }
     }
     out
+}
+
+/// Format iteration logs as TOON.
+pub fn format_iteration_list(iterations: &[&IterationLog]) -> String {
+    let mut out = String::from("[iter|task_id|duration_ms|output]\n");
+    for it in iterations {
+        let truncated = truncate_output(&it.agent_output, 120);
+        out.push_str(&format!(
+            "{}|{}|{}|{}\n",
+            it.iteration_number, it.task_id, it.duration_ms, truncated
+        ));
+    }
+    out
+}
+
+/// Truncate output to max_len characters, replacing the tail with "…" if needed.
+fn truncate_output(s: &str, max_len: usize) -> String {
+    let single_line = s.replace('\n', " ");
+    if single_line.len() <= max_len {
+        single_line
+    } else {
+        format!("{}…", &single_line[..max_len])
+    }
 }
 
 /// Format an epic list as TOON.

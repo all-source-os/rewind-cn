@@ -245,6 +245,24 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                         }
                     },
                     {
+                        "name": "rewind_list_iterations",
+                        "description": "List iteration logs for an agent session. Returns iteration number, duration, and truncated output for each iteration.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "session_id": {
+                                    "type": "string",
+                                    "description": "The session ID to query iterations for"
+                                },
+                                "format": {
+                                    "type": "string",
+                                    "description": "Output format: 'json' (default) or 'toon' (token-optimized, ~50% fewer tokens)"
+                                }
+                            },
+                            "required": ["session_id"]
+                        }
+                    },
+                    {
                         "name": "rewind_feedback",
                         "description": "Submit feedback or bug report. Creates a GitHub issue if gh CLI is available, otherwise returns a pre-filled issue URL.",
                         "inputSchema": {
@@ -273,6 +291,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
             "rewind_run" => self.tool_run(id, arguments).await,
             "rewind_task_list" => self.tool_task_list(id, arguments).await,
             "rewind_task_get" => self.tool_task_get(id, arguments).await,
+            "rewind_list_iterations" => self.tool_list_iterations(id, arguments).await,
             "rewind_feedback" => self.tool_feedback(id, arguments).await,
             _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {tool_name}")),
         }
@@ -495,6 +514,68 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                 }
             }
             None => JsonRpcResponse::error(id, -32000, format!("Task not found: {task_id}")),
+        }
+    }
+
+    async fn tool_list_iterations(&self, id: Option<Value>, args: Value) -> JsonRpcResponse {
+        let session_id = match args.get("session_id").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => {
+                return JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    "Missing required parameter: session_id",
+                )
+            }
+        };
+
+        if let Err(e) = self.engine.rebuild_projections().await {
+            return JsonRpcResponse::error(id, -32000, e.to_string());
+        }
+
+        let analytics = self.engine.analytics();
+        let analytics = analytics.read().await;
+        let iterations = analytics.iteration_history(session_id);
+
+        if wants_toon(&args) {
+            let text = toon::format_iteration_list(&iterations);
+            return JsonRpcResponse::success(
+                id,
+                json!({ "content": [{ "type": "text", "text": text }] }),
+            );
+        }
+
+        #[derive(Serialize)]
+        struct IterationEntry {
+            iteration_number: u32,
+            task_id: String,
+            duration_ms: u64,
+            output: String,
+        }
+
+        let entries: Vec<IterationEntry> = iterations
+            .iter()
+            .map(|it| {
+                let output = if it.agent_output.len() > 200 {
+                    format!("{}…", &it.agent_output[..200])
+                } else {
+                    it.agent_output.clone()
+                };
+                IterationEntry {
+                    iteration_number: it.iteration_number,
+                    task_id: it.task_id.to_string(),
+                    duration_ms: it.duration_ms,
+                    output,
+                }
+            })
+            .collect();
+
+        match serde_json::to_value(&entries) {
+            Ok(v) => JsonRpcResponse::success(
+                id,
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }] }),
+            ),
+            Err(e) => JsonRpcResponse::error(id, -32000, e.to_string()),
         }
     }
 

@@ -6,6 +6,16 @@ use serde::Serialize;
 use crate::domain::events::RewindEvent;
 use crate::domain::ids::{EpicId, SessionId, TaskId};
 
+/// Per-iteration log entry.
+#[derive(Debug, Clone, Serialize)]
+pub struct IterationLog {
+    pub session_id: SessionId,
+    pub task_id: TaskId,
+    pub iteration_number: u32,
+    pub agent_output: String,
+    pub duration_ms: u64,
+}
+
 /// Per-task execution metrics.
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskMetrics {
@@ -69,6 +79,8 @@ pub struct AnalyticsProjection {
     pub tool_counts: HashMap<String, usize>,
     /// Map task_id → epic_id for cross-referencing.
     task_to_epic: HashMap<String, String>,
+    /// Iteration logs keyed by session_id.
+    pub iterations: HashMap<String, Vec<IterationLog>>,
 }
 
 impl AnalyticsProjection {
@@ -237,6 +249,25 @@ impl AnalyticsProjection {
                 }
             }
 
+            RewindEvent::IterationLogged {
+                session_id,
+                task_id,
+                iteration_number,
+                agent_output,
+                duration_ms,
+            } => {
+                self.iterations
+                    .entry(session_id.to_string())
+                    .or_default()
+                    .push(IterationLog {
+                        session_id: session_id.clone(),
+                        task_id: task_id.clone(),
+                        iteration_number: *iteration_number,
+                        agent_output: agent_output.clone(),
+                        duration_ms: *duration_ms,
+                    });
+            }
+
             _ => {}
         }
     }
@@ -272,6 +303,18 @@ impl AnalyticsProjection {
             .collect();
         usage.sort_by(|a, b| b.call_count.cmp(&a.call_count));
         usage
+    }
+
+    /// Get iteration logs for a session, sorted by iteration number.
+    pub fn iteration_history(&self, session_id: &str) -> Vec<&IterationLog> {
+        match self.iterations.get(session_id) {
+            Some(logs) => {
+                let mut sorted: Vec<&IterationLog> = logs.iter().collect();
+                sorted.sort_by_key(|l| l.iteration_number);
+                sorted
+            }
+            None => vec![],
+        }
     }
 
     /// Get session history sorted by start time.
