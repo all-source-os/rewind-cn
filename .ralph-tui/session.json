@@ -3,10 +3,10 @@
   "sessionId": "d34a24b9-3415-4a03-8832-4a246949406e",
   "status": "running",
   "startedAt": "2026-03-12T17:14:32.755Z",
-  "updatedAt": "2026-03-12T17:48:53.606Z",
-  "currentIteration": 9,
+  "updatedAt": "2026-03-12T17:52:27.030Z",
+  "currentIteration": 10,
   "maxIterations": 0,
-  "tasksCompleted": 9,
+  "tasksCompleted": 10,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -47,8 +47,8 @@
       {
         "id": "US-006",
         "title": "Project progress into prompt context",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-007",
@@ -178,6 +178,16 @@
       "durationMs": 271266,
       "startedAt": "2026-03-12T17:40:38.827Z",
       "endedAt": "2026-03-12T17:45:10.093Z"
+    },
+    {
+      "iteration": 10,
+      "status": "completed",
+      "taskId": "US-006",
+      "taskTitle": "Project progress into prompt context",
+      "taskCompleted": true,
+      "durationMs": 222397,
+      "startedAt": "2026-03-12T17:45:11.206Z",
+      "endedAt": "2026-03-12T17:48:53.603Z"
     }
   ],
   "skippedTaskIds": [],
