@@ -11,6 +11,7 @@ pub mod llm;
 pub mod mcp_server;
 pub mod orchestrator;
 pub mod planner;
+pub mod prompt_template;
 pub mod telemetry;
 pub mod toon;
 pub mod worktree;

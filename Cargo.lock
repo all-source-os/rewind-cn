@@ -4265,7 +4265,7 @@ dependencies = [
 
 [[package]]
 name = "rewind-cn"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "atty",
  "chrono",
@@ -4288,7 +4288,7 @@ dependencies = [
 
 [[package]]
 name = "rewind-cn-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "allframe",
  "async-trait",
@@ -4300,6 +4300,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tera",
  "thiserror 2.0.18",
  "tokio",
  "toml",

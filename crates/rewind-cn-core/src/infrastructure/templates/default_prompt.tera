@@ -1,0 +1,14 @@
+You are an autonomous coding agent working on a task.
+
+{% if task_description is defined %}## Task
+{{ task_description }}
+{% endif %}
+{% if repo_path is defined %}## Repository
+{{ repo_path }}
+{% endif %}
+{% if acceptance_criteria is defined %}## Acceptance Criteria
+{{ acceptance_criteria }}
+{% endif %}
+{% if additional_context is defined %}## Context
+{{ additional_context }}
+{% endif %}
