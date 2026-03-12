@@ -3,10 +3,10 @@
   "sessionId": "d34a24b9-3415-4a03-8832-4a246949406e",
   "status": "running",
   "startedAt": "2026-03-12T17:14:32.755Z",
-  "updatedAt": "2026-03-12T17:23:32.523Z",
-  "currentIteration": 2,
+  "updatedAt": "2026-03-12T17:24:29.465Z",
+  "currentIteration": 3,
   "maxIterations": 0,
-  "tasksCompleted": 2,
+  "tasksCompleted": 3,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -35,8 +35,8 @@
       {
         "id": "US-004",
         "title": "Add ProgressNoted event",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-005",
@@ -108,6 +108,16 @@
       "durationMs": 105957,
       "startedAt": "2026-03-12T17:18:35.809Z",
       "endedAt": "2026-03-12T17:20:21.766Z"
+    },
+    {
+      "iteration": 3,
+      "status": "completed",
+      "taskId": "US-004",
+      "taskTitle": "Add ProgressNoted event",
+      "taskCompleted": true,
+      "durationMs": 189660,
+      "startedAt": "2026-03-12T17:20:22.861Z",
+      "endedAt": "2026-03-12T17:23:32.521Z"
     }
   ],
   "skippedTaskIds": [],
