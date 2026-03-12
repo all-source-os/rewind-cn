@@ -143,6 +143,15 @@ pub enum RewindEvent {
         note_type: ProgressNoteType,
     },
 
+    // Iteration events
+    IterationLogged {
+        session_id: SessionId,
+        task_id: TaskId,
+        iteration_number: u32,
+        agent_output: String,
+        duration_ms: u64,
+    },
+
     // Agent events
     AgentToolCall {
         task_id: TaskId,
@@ -211,6 +220,37 @@ mod tests {
                 assert_eq!(note_type, ProgressNoteType::Discretionary);
             }
             other => panic!("expected ProgressNoted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn iteration_logged_serde_roundtrip() {
+        let event = RewindEvent::IterationLogged {
+            session_id: SessionId::new("sess-1"),
+            task_id: TaskId::new("task-1"),
+            iteration_number: 3,
+            agent_output: "Applied fix to handler.rs".into(),
+            duration_ms: 4500,
+        };
+
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: RewindEvent = serde_json::from_str(&json).expect("deserialize");
+
+        match back {
+            RewindEvent::IterationLogged {
+                session_id,
+                task_id,
+                iteration_number,
+                agent_output,
+                duration_ms,
+            } => {
+                assert_eq!(session_id.to_string(), "sess-1");
+                assert_eq!(task_id.to_string(), "task-1");
+                assert_eq!(iteration_number, 3);
+                assert_eq!(agent_output, "Applied fix to handler.rs");
+                assert_eq!(duration_ms, 4500);
+            }
+            other => panic!("expected IterationLogged, got {other:?}"),
         }
     }
 }
