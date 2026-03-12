@@ -482,9 +482,7 @@ fn build_coder_prompt(
     task_title: &str,
     task_description: &str,
     acceptance_criteria: &[AcceptanceCriterion],
-    epic_name: Option<&str>,
-    project_context: Option<&str>,
-    template_path: Option<&Path>,
+    prompt_ctx: &PromptContext<'_>,
 ) -> Result<String, RewindError> {
     let mut context_map = HashMap::new();
     context_map.insert("task_title".to_string(), task_title.to_string());
@@ -493,15 +491,18 @@ fn build_coder_prompt(
         "acceptance_criteria".to_string(),
         format_acceptance_criteria(acceptance_criteria),
     );
-    if let Some(epic) = epic_name {
+    if let Some(epic) = prompt_ctx.epic_name {
         context_map.insert("epic".to_string(), epic.to_string());
     }
-    if let Some(ctx) = project_context {
+    if let Some(ctx) = prompt_ctx.project_context {
         context_map.insert("project_context".to_string(), ctx.to_string());
+    }
+    if let Some(progress) = prompt_ctx.progress {
+        context_map.insert("progress".to_string(), progress.to_string());
     }
 
     let default_path = PathBuf::from("/nonexistent/default_prompt.tera");
-    let path = template_path.unwrap_or(&default_path);
+    let path = prompt_ctx.template_path.unwrap_or(&default_path);
     render_prompt(path, &context_map)
 }
 
@@ -510,6 +511,7 @@ fn build_coder_prompt(
 pub struct PromptContext<'a> {
     pub epic_name: Option<&'a str>,
     pub project_context: Option<&'a str>,
+    pub progress: Option<&'a str>,
     pub template_path: Option<&'a Path>,
 }
 
@@ -543,9 +545,7 @@ impl CoderAgent {
             task_title,
             task_description,
             acceptance_criteria,
-            prompt_ctx.epic_name,
-            prompt_ctx.project_context,
-            prompt_ctx.template_path,
+            prompt_ctx,
         )?;
         let prompt_input = "Begin working on the task. Read relevant files, implement changes, and verify each acceptance criterion.";
 
@@ -639,7 +639,7 @@ mod tests {
         ];
 
         let prompt =
-            build_coder_prompt("My Task", "Do the thing", &criteria, None, None, None).unwrap();
+            build_coder_prompt("My Task", "Do the thing", &criteria, &PromptContext::default()).unwrap();
         assert!(prompt.contains("My Task"));
         assert!(prompt.contains("Do the thing"));
         assert!(prompt.contains("- [ ] File exists"));
@@ -653,15 +653,12 @@ mod tests {
             checked: false,
         }];
 
-        let prompt = build_coder_prompt(
-            "My Task",
-            "Do the thing",
-            &criteria,
-            Some("Epic-42: Platform Overhaul"),
-            Some("Rust CQRS service"),
-            None,
-        )
-        .unwrap();
+        let ctx = PromptContext {
+            epic_name: Some("Epic-42: Platform Overhaul"),
+            project_context: Some("Rust CQRS service"),
+            ..Default::default()
+        };
+        let prompt = build_coder_prompt("My Task", "Do the thing", &criteria, &ctx).unwrap();
         assert!(prompt.contains("Epic-42: Platform Overhaul"));
         assert!(prompt.contains("Rust CQRS service"));
     }
@@ -673,15 +670,12 @@ mod tests {
         std::fs::write(&tpl_path, "Custom: {{ task_title }} - {{ epic }}").unwrap();
 
         let criteria = vec![];
-        let prompt = build_coder_prompt(
-            "My Task",
-            "desc",
-            &criteria,
-            Some("Epic-1"),
-            None,
-            Some(tpl_path.as_path()),
-        )
-        .unwrap();
+        let ctx = PromptContext {
+            epic_name: Some("Epic-1"),
+            template_path: Some(tpl_path.as_path()),
+            ..Default::default()
+        };
+        let prompt = build_coder_prompt("My Task", "desc", &criteria, &ctx).unwrap();
         assert_eq!(prompt, "Custom: My Task - Epic-1");
     }
 

@@ -147,6 +147,7 @@ impl Orchestrator {
             epic_name: self.epic_name.as_deref(),
             project_context: self.project_context.as_deref(),
             template_path: self.prompt_template_path.as_deref(),
+            ..Default::default()
         };
         let iteration_start = Instant::now();
         let (tool_calls, agent_output) = self
@@ -360,6 +361,7 @@ impl Orchestrator {
             epic_name: self.epic_name.as_deref(),
             project_context: self.project_context.as_deref(),
             template_path: self.prompt_template_path.as_deref(),
+            ..Default::default()
         };
         let iteration_start = Instant::now();
         let (tool_calls, agent_output) = self

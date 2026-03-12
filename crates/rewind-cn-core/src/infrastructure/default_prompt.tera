@@ -13,6 +13,9 @@ You are an autonomous coding agent working on a task. Your goal is to implement 
 {% if project_context is defined and project_context %}## Project Context
 {{ project_context }}
 {% endif %}
+{% if progress is defined and progress %}## Progress Notes
+{{ progress }}
+{% endif %}
 ## Instructions
 1. Read relevant files to understand the codebase context.
 2. Implement the changes needed to satisfy each acceptance criterion.
