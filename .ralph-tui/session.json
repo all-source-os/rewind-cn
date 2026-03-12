@@ -3,10 +3,10 @@
   "sessionId": "d34a24b9-3415-4a03-8832-4a246949406e",
   "status": "running",
   "startedAt": "2026-03-12T17:14:32.755Z",
-  "updatedAt": "2026-03-12T17:36:18.063Z",
-  "currentIteration": 6,
+  "updatedAt": "2026-03-12T17:40:37.735Z",
+  "currentIteration": 7,
   "maxIterations": 0,
-  "tasksCompleted": 6,
+  "tasksCompleted": 7,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -41,8 +41,8 @@
       {
         "id": "US-005",
         "title": "Emit ProgressNoted events from handlers",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-006",
@@ -148,6 +148,16 @@
       "durationMs": 335767,
       "startedAt": "2026-03-12T17:26:24.346Z",
       "endedAt": "2026-03-12T17:32:00.113Z"
+    },
+    {
+      "iteration": 7,
+      "status": "completed",
+      "taskId": "US-005",
+      "taskTitle": "Emit ProgressNoted events from handlers",
+      "taskCompleted": true,
+      "durationMs": 256840,
+      "startedAt": "2026-03-12T17:32:01.220Z",
+      "endedAt": "2026-03-12T17:36:18.060Z"
     }
   ],
   "skippedTaskIds": [],
