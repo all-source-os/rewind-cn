@@ -3,10 +3,10 @@
   "sessionId": "d34a24b9-3415-4a03-8832-4a246949406e",
   "status": "running",
   "startedAt": "2026-03-12T17:14:32.755Z",
-  "updatedAt": "2026-03-12T17:52:27.030Z",
-  "currentIteration": 10,
+  "updatedAt": "2026-03-12T17:57:40.328Z",
+  "currentIteration": 11,
   "maxIterations": 0,
-  "tasksCompleted": 10,
+  "tasksCompleted": 11,
   "isPaused": false,
   "agentPlugin": "claude",
   "trackerState": {
@@ -77,8 +77,8 @@
       {
         "id": "US-011",
         "title": "Add MCP query for iteration history",
-        "status": "open",
-        "completedInSession": false
+        "status": "completed",
+        "completedInSession": true
       },
       {
         "id": "US-012",
@@ -188,6 +188,16 @@
       "durationMs": 222397,
       "startedAt": "2026-03-12T17:45:11.206Z",
       "endedAt": "2026-03-12T17:48:53.603Z"
+    },
+    {
+      "iteration": 11,
+      "status": "completed",
+      "taskId": "US-011",
+      "taskTitle": "Add MCP query for iteration history",
+      "taskCompleted": true,
+      "durationMs": 212324,
+      "startedAt": "2026-03-12T17:48:54.703Z",
+      "endedAt": "2026-03-12T17:52:27.027Z"
     }
   ],
   "skippedTaskIds": [],
