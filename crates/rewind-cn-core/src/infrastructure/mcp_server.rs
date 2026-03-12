@@ -263,6 +263,27 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                         }
                     },
                     {
+                        "name": "rewind_list_progress",
+                        "description": "List progress notes captured during task execution. Returns note text, type, timestamp, and associated task ID.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "session_id": {
+                                    "type": "string",
+                                    "description": "Optional session ID to filter notes by"
+                                },
+                                "note_type": {
+                                    "type": "string",
+                                    "description": "Optional note type filter: TaskCompleted, TaskFailed, RetryLearning, Discretionary"
+                                },
+                                "format": {
+                                    "type": "string",
+                                    "description": "Output format: 'json' (default) or 'toon' (token-optimized, ~50% fewer tokens)"
+                                }
+                            }
+                        }
+                    },
+                    {
                         "name": "rewind_feedback",
                         "description": "Submit feedback or bug report. Creates a GitHub issue if gh CLI is available, otherwise returns a pre-filled issue URL.",
                         "inputSchema": {
@@ -292,6 +313,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
             "rewind_task_list" => self.tool_task_list(id, arguments).await,
             "rewind_task_get" => self.tool_task_get(id, arguments).await,
             "rewind_list_iterations" => self.tool_list_iterations(id, arguments).await,
+            "rewind_list_progress" => self.tool_list_progress(id, arguments).await,
             "rewind_feedback" => self.tool_feedback(id, arguments).await,
             _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {tool_name}")),
         }
@@ -567,6 +589,55 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                     duration_ms: it.duration_ms,
                     output,
                 }
+            })
+            .collect();
+
+        match serde_json::to_value(&entries) {
+            Ok(v) => JsonRpcResponse::success(
+                id,
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }] }),
+            ),
+            Err(e) => JsonRpcResponse::error(id, -32000, e.to_string()),
+        }
+    }
+
+    async fn tool_list_progress(&self, id: Option<Value>, args: Value) -> JsonRpcResponse {
+        let session_id = args.get("session_id").and_then(|v| v.as_str());
+        let note_type = args.get("note_type").and_then(|v| v.as_str());
+
+        if let Err(e) = self.engine.rebuild_projections().await {
+            return JsonRpcResponse::error(id, -32000, e.to_string());
+        }
+
+        let analytics = self.engine.analytics();
+        let analytics = analytics.read().await;
+        let notes = analytics.progress_notes(session_id, note_type);
+
+        if wants_toon(&args) {
+            let text = toon::format_progress_list(&notes);
+            return JsonRpcResponse::success(
+                id,
+                json!({ "content": [{ "type": "text", "text": text }] }),
+            );
+        }
+
+        #[derive(Serialize)]
+        struct ProgressEntry {
+            session_id: String,
+            task_id: Option<String>,
+            note: String,
+            note_type: String,
+            noted_at: String,
+        }
+
+        let entries: Vec<ProgressEntry> = notes
+            .iter()
+            .map(|n| ProgressEntry {
+                session_id: n.session_id.to_string(),
+                task_id: n.task_id.as_ref().map(|t| t.to_string()),
+                note: n.note.clone(),
+                note_type: format!("{:?}", n.note_type),
+                noted_at: n.noted_at.to_rfc3339(),
             })
             .collect();
 

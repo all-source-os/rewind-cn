@@ -144,6 +144,8 @@ pub enum RewindEvent {
         task_id: Option<TaskId>,
         note: String,
         note_type: ProgressNoteType,
+        #[serde(default = "Utc::now")]
+        noted_at: DateTime<Utc>,
     },
 
     // Iteration events
@@ -184,6 +186,7 @@ mod tests {
             task_id: Some(TaskId::new("task-1")),
             note: "Retry succeeded after increasing timeout".into(),
             note_type: ProgressNoteType::RetryLearning,
+            noted_at: Utc::now(),
         };
 
         let json = serde_json::to_string(&event).expect("serialize");
@@ -195,6 +198,7 @@ mod tests {
                 task_id,
                 note,
                 note_type,
+                ..
             } => {
                 assert_eq!(session_id.to_string(), "sess-1");
                 assert_eq!(task_id.unwrap().to_string(), "task-1");
@@ -212,6 +216,7 @@ mod tests {
             task_id: None,
             note: "General observation".into(),
             note_type: ProgressNoteType::Discretionary,
+            noted_at: Utc::now(),
         };
 
         let json = serde_json::to_string(&event).expect("serialize");

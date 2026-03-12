@@ -56,6 +56,7 @@ pub fn handle_complete_task(cmd: CompleteTask) -> Result<Vec<RewindEvent>, Rewin
         task_id: Some(cmd.task_id.clone()),
         note: format!("Task {} completed", cmd.task_id),
         note_type: ProgressNoteType::TaskCompleted,
+        noted_at: Utc::now(),
     });
     if let Some(note) = cmd.discretionary_note {
         events.push(RewindEvent::ProgressNoted {
@@ -63,6 +64,7 @@ pub fn handle_complete_task(cmd: CompleteTask) -> Result<Vec<RewindEvent>, Rewin
             task_id: Some(cmd.task_id),
             note,
             note_type: ProgressNoteType::Discretionary,
+            noted_at: Utc::now(),
         });
     }
     Ok(events)
@@ -79,6 +81,7 @@ pub fn handle_fail_task(cmd: FailTask) -> Result<Vec<RewindEvent>, RewindError> 
         task_id: Some(cmd.task_id.clone()),
         note: format!("Task {} failed: {}", cmd.task_id, cmd.reason),
         note_type: ProgressNoteType::TaskFailed,
+        noted_at: Utc::now(),
     });
     if let Some(note) = cmd.discretionary_note {
         events.push(RewindEvent::ProgressNoted {
@@ -86,6 +89,7 @@ pub fn handle_fail_task(cmd: FailTask) -> Result<Vec<RewindEvent>, RewindError> 
             task_id: Some(cmd.task_id),
             note,
             note_type: ProgressNoteType::Discretionary,
+            noted_at: Utc::now(),
         });
     }
     Ok(events)

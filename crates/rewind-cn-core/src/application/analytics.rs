@@ -3,8 +3,18 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::domain::events::RewindEvent;
+use crate::domain::events::{ProgressNoteType, RewindEvent};
 use crate::domain::ids::{EpicId, SessionId, TaskId};
+
+/// A captured progress note from the event stream.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgressNoteEntry {
+    pub session_id: SessionId,
+    pub task_id: Option<TaskId>,
+    pub note: String,
+    pub note_type: ProgressNoteType,
+    pub noted_at: DateTime<Utc>,
+}
 
 /// Per-iteration log entry.
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +91,8 @@ pub struct AnalyticsProjection {
     task_to_epic: HashMap<String, String>,
     /// Iteration logs keyed by session_id.
     pub iterations: HashMap<String, Vec<IterationLog>>,
+    /// Progress notes in insertion order.
+    pub progress_notes: Vec<ProgressNoteEntry>,
 }
 
 impl AnalyticsProjection {
@@ -268,6 +280,22 @@ impl AnalyticsProjection {
                     });
             }
 
+            RewindEvent::ProgressNoted {
+                session_id,
+                task_id,
+                note,
+                note_type,
+                noted_at,
+            } => {
+                self.progress_notes.push(ProgressNoteEntry {
+                    session_id: session_id.clone(),
+                    task_id: task_id.clone(),
+                    note: note.clone(),
+                    note_type: note_type.clone(),
+                    noted_at: *noted_at,
+                });
+            }
+
             _ => {}
         }
     }
@@ -315,6 +343,36 @@ impl AnalyticsProjection {
             }
             None => vec![],
         }
+    }
+
+    /// Get progress notes with optional session_id and note_type filters.
+    pub fn progress_notes(
+        &self,
+        session_id: Option<&str>,
+        note_type: Option<&str>,
+    ) -> Vec<&ProgressNoteEntry> {
+        self.progress_notes
+            .iter()
+            .filter(|n| {
+                if let Some(sid) = session_id {
+                    if n.session_id.as_ref() != sid {
+                        return false;
+                    }
+                }
+                if let Some(nt) = note_type {
+                    let type_str = match &n.note_type {
+                        ProgressNoteType::TaskCompleted => "TaskCompleted",
+                        ProgressNoteType::TaskFailed => "TaskFailed",
+                        ProgressNoteType::RetryLearning => "RetryLearning",
+                        ProgressNoteType::Discretionary => "Discretionary",
+                    };
+                    if type_str != nt {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
     }
 
     /// Get session history sorted by start time.

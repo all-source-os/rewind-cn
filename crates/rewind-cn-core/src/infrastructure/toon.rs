@@ -1,4 +1,4 @@
-use crate::application::analytics::IterationLog;
+use crate::application::analytics::{IterationLog, ProgressNoteEntry};
 use crate::application::status::StatusSummary;
 use crate::domain::model::TaskView;
 
@@ -105,6 +105,25 @@ pub fn format_iteration_list(iterations: &[&IterationLog]) -> String {
         out.push_str(&format!(
             "{}|{}|{}|{}\n",
             it.iteration_number, it.task_id, it.duration_ms, truncated
+        ));
+    }
+    out
+}
+
+/// Format progress notes as TOON.
+pub fn format_progress_list(notes: &[&ProgressNoteEntry]) -> String {
+    let mut out = String::from("[session_id|task_id|note_type|noted_at|note]\n");
+    for n in notes {
+        let task_str = n
+            .task_id
+            .as_ref()
+            .map(|t| t.to_string())
+            .unwrap_or_default();
+        let type_str = format!("{:?}", n.note_type);
+        let truncated = truncate_output(&n.note, 120);
+        out.push_str(&format!(
+            "{}|{}|{}|{}|{}\n",
+            n.session_id, task_str, type_str, n.noted_at, truncated
         ));
     }
     out

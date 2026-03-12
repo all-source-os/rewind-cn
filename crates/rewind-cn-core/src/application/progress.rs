@@ -63,6 +63,7 @@ mod tests {
             task_id: task_id.map(TaskId::new),
             note: note.into(),
             note_type,
+            noted_at: chrono::Utc::now(),
         }
     }
 
