@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rig::completion::{Prompt, ToolDefinition};
@@ -10,6 +11,7 @@ use tokio::sync::Mutex;
 use crate::domain::error::RewindError;
 use crate::domain::events::AcceptanceCriterion;
 use crate::infrastructure::llm::{AgentConfig, ProviderClient};
+use crate::infrastructure::prompt_template::render_prompt;
 
 /// A recorded tool call for audit trail.
 #[derive(Debug, Clone)]
@@ -460,46 +462,55 @@ impl Tool for RunCommandTool {
 // CoderAgent
 // ---------------------------------------------------------------------------
 
-/// Builds the system prompt for the coder agent.
+/// Format acceptance criteria as a checkbox list.
+fn format_acceptance_criteria(criteria: &[AcceptanceCriterion]) -> String {
+    criteria
+        .iter()
+        .map(|c| {
+            let check = if c.checked { "x" } else { " " };
+            format!("- [{}] {}", check, c.description)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Builds the system prompt for the coder agent using the Tera template engine.
+///
+/// If `template_path` points to an existing file, that template is used;
+/// otherwise the embedded default template is rendered.
 fn build_coder_prompt(
     task_title: &str,
     task_description: &str,
     acceptance_criteria: &[AcceptanceCriterion],
-) -> String {
-    let mut prompt = format!(
-        r#"You are an autonomous coding agent working on a task. Your goal is to implement the task and verify all acceptance criteria.
-
-## Task
-**Title:** {task_title}
-**Description:** {task_description}
-
-## Acceptance Criteria
-"#
+    epic_name: Option<&str>,
+    project_context: Option<&str>,
+    template_path: Option<&Path>,
+) -> Result<String, RewindError> {
+    let mut context_map = HashMap::new();
+    context_map.insert("task_title".to_string(), task_title.to_string());
+    context_map.insert("task_description".to_string(), task_description.to_string());
+    context_map.insert(
+        "acceptance_criteria".to_string(),
+        format_acceptance_criteria(acceptance_criteria),
     );
-
-    for (i, criterion) in acceptance_criteria.iter().enumerate() {
-        let check = if criterion.checked { "x" } else { " " };
-        prompt.push_str(&format!("- [{}] {}\n", check, criterion.description));
-        let _ = i; // index available if needed
+    if let Some(epic) = epic_name {
+        context_map.insert("epic".to_string(), epic.to_string());
+    }
+    if let Some(ctx) = project_context {
+        context_map.insert("project_context".to_string(), ctx.to_string());
     }
 
-    prompt.push_str(
-        r#"
-## Instructions
-1. Read relevant files to understand the codebase context.
-2. Implement the changes needed to satisfy each acceptance criterion.
-3. After making changes, run tests or verification commands to confirm each criterion is met.
-4. When you are done, output a summary of what you did and which criteria are satisfied.
+    let default_path = PathBuf::from("/nonexistent/default_prompt.tera");
+    let path = template_path.unwrap_or(&default_path);
+    render_prompt(path, &context_map)
+}
 
-## Important
-- Make minimal, focused changes. Don't refactor unrelated code.
-- Write tests for new functionality where appropriate.
-- If a criterion cannot be satisfied, explain why clearly.
-- Mark each criterion as verified when you confirm it passes.
-"#,
-    );
-
-    prompt
+/// Optional prompt context for the coder agent.
+#[derive(Debug, Default)]
+pub struct PromptContext<'a> {
+    pub epic_name: Option<&'a str>,
+    pub project_context: Option<&'a str>,
+    pub template_path: Option<&'a Path>,
 }
 
 /// LLM-powered coder agent using rig-core with tool-use.
@@ -524,10 +535,18 @@ impl CoderAgent {
         acceptance_criteria: &[AcceptanceCriterion],
         work_dir: PathBuf,
         timeout_secs: u64,
+        prompt_ctx: &PromptContext<'_>,
     ) -> Result<(Vec<ToolCallRecord>, String), RewindError> {
         let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
 
-        let system_prompt = build_coder_prompt(task_title, task_description, acceptance_criteria);
+        let system_prompt = build_coder_prompt(
+            task_title,
+            task_description,
+            acceptance_criteria,
+            prompt_ctx.epic_name,
+            prompt_ctx.project_context,
+            prompt_ctx.template_path,
+        )?;
         let prompt_input = "Begin working on the task. Read relevant files, implement changes, and verify each acceptance criterion.";
 
         let response: String = match &self.client {
@@ -619,11 +638,51 @@ mod tests {
             },
         ];
 
-        let prompt = build_coder_prompt("My Task", "Do the thing", &criteria);
+        let prompt =
+            build_coder_prompt("My Task", "Do the thing", &criteria, None, None, None).unwrap();
         assert!(prompt.contains("My Task"));
         assert!(prompt.contains("Do the thing"));
         assert!(prompt.contains("- [ ] File exists"));
         assert!(prompt.contains("- [x] Tests pass"));
+    }
+
+    #[test]
+    fn build_coder_prompt_includes_epic_and_project_context() {
+        let criteria = vec![AcceptanceCriterion {
+            description: "It works".into(),
+            checked: false,
+        }];
+
+        let prompt = build_coder_prompt(
+            "My Task",
+            "Do the thing",
+            &criteria,
+            Some("Epic-42: Platform Overhaul"),
+            Some("Rust CQRS service"),
+            None,
+        )
+        .unwrap();
+        assert!(prompt.contains("Epic-42: Platform Overhaul"));
+        assert!(prompt.contains("Rust CQRS service"));
+    }
+
+    #[test]
+    fn build_coder_prompt_with_custom_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let tpl_path = dir.path().join("custom.tera");
+        std::fs::write(&tpl_path, "Custom: {{ task_title }} - {{ epic }}").unwrap();
+
+        let criteria = vec![];
+        let prompt = build_coder_prompt(
+            "My Task",
+            "desc",
+            &criteria,
+            Some("Epic-1"),
+            None,
+            Some(tpl_path.as_path()),
+        )
+        .unwrap();
+        assert_eq!(prompt, "Custom: My Task - Epic-1");
     }
 
     #[tokio::test]

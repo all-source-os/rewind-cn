@@ -46,36 +46,40 @@ mod tests {
     #[test]
     fn render_default_template_full_context() {
         let ctx = HashMap::from([
-            ("task".into(), "Implement feature X".into()),
+            ("task_title".into(), "Implement feature X".into()),
+            ("task_description".into(), "Build the thing".into()),
+            (
+                "acceptance_criteria".into(),
+                "- [ ] It works\n- [x] Tests pass".into(),
+            ),
             ("epic".into(), "Epic-42: Platform Overhaul".into()),
-            ("progress".into(), "3 of 5 tasks complete".into()),
             ("project_context".into(), "Rust CQRS service".into()),
         ]);
         let result = render_prompt(&PathBuf::from("/nonexistent/template.tera"), &ctx);
         assert!(result.is_ok());
         let rendered = result.unwrap();
         assert!(rendered.contains("Implement feature X"));
+        assert!(rendered.contains("Build the thing"));
         assert!(rendered.contains("Epic-42: Platform Overhaul"));
-        assert!(rendered.contains("3 of 5 tasks complete"));
         assert!(rendered.contains("Rust CQRS service"));
+        assert!(rendered.contains("- [ ] It works"));
     }
 
     #[test]
     fn render_default_template_partial_context() {
-        // Only task provided — optional variables should be gracefully absent
-        let ctx = HashMap::from([("task".into(), "Fix the login bug".into())]);
+        // Only task_title provided — optional variables should be gracefully absent
+        let ctx = HashMap::from([("task_title".into(), "Fix the login bug".into())]);
         let result = render_prompt(&PathBuf::from("/nonexistent/template.tera"), &ctx);
         assert!(result.is_ok());
         let rendered = result.unwrap();
         assert!(rendered.contains("Fix the login bug"));
         assert!(!rendered.contains("## Epic"));
-        assert!(!rendered.contains("## Progress"));
         assert!(!rendered.contains("## Project Context"));
     }
 
     #[test]
     fn render_default_template_empty_context() {
-        // No variables at all — task should show default value
+        // No variables at all — task_title should show default value
         let result = render_prompt(&PathBuf::from("/nonexistent/template.tera"), &HashMap::new());
         assert!(result.is_ok());
         let rendered = result.unwrap();

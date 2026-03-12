@@ -11,7 +11,7 @@ use crate::domain::events::RewindEvent;
 use crate::domain::ids::{AgentId, TaskId};
 use crate::domain::model::TaskView;
 use crate::infrastructure::chronis::ChronisBridge;
-use crate::infrastructure::coder::{CoderAgent, ToolCallRecord};
+use crate::infrastructure::coder::{CoderAgent, PromptContext, ToolCallRecord};
 use crate::infrastructure::engine::RewindEngine;
 use crate::infrastructure::evaluator::EvaluatorAgent;
 use crate::infrastructure::llm::{AgentConfig, ProviderClient};
@@ -26,6 +26,9 @@ pub struct Orchestrator {
     timeout_secs: u64,
     max_retries: u32,
     use_chronis: bool,
+    epic_name: Option<String>,
+    project_context: Option<String>,
+    prompt_template_path: Option<PathBuf>,
 }
 
 impl Orchestrator {
@@ -51,7 +54,28 @@ impl Orchestrator {
             timeout_secs,
             max_retries,
             use_chronis,
+            epic_name: None,
+            project_context: None,
+            prompt_template_path: None,
         }
+    }
+
+    /// Set the epic name for prompt context.
+    pub fn with_epic_name(mut self, name: String) -> Self {
+        self.epic_name = Some(name);
+        self
+    }
+
+    /// Set the project context for prompt context.
+    pub fn with_project_context(mut self, ctx: String) -> Self {
+        self.project_context = Some(ctx);
+        self
+    }
+
+    /// Set a custom prompt template path.
+    pub fn with_prompt_template_path(mut self, path: PathBuf) -> Self {
+        self.prompt_template_path = Some(path);
+        self
     }
 
     /// Create an orchestrator without chronis (for tests).
@@ -72,6 +96,9 @@ impl Orchestrator {
             timeout_secs,
             max_retries,
             use_chronis: false,
+            epic_name: None,
+            project_context: None,
+            prompt_template_path: None,
         }
     }
 
@@ -113,6 +140,11 @@ impl Orchestrator {
         info!("Executing: {}", task.title);
 
         // EXECUTE: run coder agent
+        let prompt_ctx = PromptContext {
+            epic_name: self.epic_name.as_deref(),
+            project_context: self.project_context.as_deref(),
+            template_path: self.prompt_template_path.as_deref(),
+        };
         let (tool_calls, agent_output) = self
             .coder
             .execute_task(
@@ -121,6 +153,7 @@ impl Orchestrator {
                 &task.acceptance_criteria,
                 self.work_dir.clone(),
                 self.timeout_secs,
+                &prompt_ctx,
             )
             .await?;
 
@@ -301,6 +334,11 @@ impl Orchestrator {
             work_dir.display()
         );
 
+        let prompt_ctx = PromptContext {
+            epic_name: self.epic_name.as_deref(),
+            project_context: self.project_context.as_deref(),
+            template_path: self.prompt_template_path.as_deref(),
+        };
         let (tool_calls, agent_output) = self
             .coder
             .execute_task(
@@ -309,6 +347,7 @@ impl Orchestrator {
                 &task.acceptance_criteria,
                 work_dir,
                 self.timeout_secs,
+                &prompt_ctx,
             )
             .await?;
 
