@@ -31,6 +31,15 @@ pub struct QualityGate {
     pub tier: GateTier,
 }
 
+/// Progress note type — categorises the kind of learning captured.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub enum ProgressNoteType {
+    TaskCompleted,
+    TaskFailed,
+    RetryLearning,
+    Discretionary,
+}
+
 /// Story type tag — determines which story-level gates apply.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum StoryType {
@@ -126,6 +135,14 @@ pub enum RewindEvent {
         ended_at: DateTime<Utc>,
     },
 
+    // Progress events
+    ProgressNoted {
+        session_id: SessionId,
+        task_id: Option<TaskId>,
+        note: String,
+        note_type: ProgressNoteType,
+    },
+
     // Agent events
     AgentToolCall {
         task_id: TaskId,
@@ -142,3 +159,58 @@ impl EventTypeName for RewindEvent {
     }
 }
 impl allframe::cqrs::Event for RewindEvent {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ids::{SessionId, TaskId};
+
+    #[test]
+    fn progress_noted_serde_roundtrip() {
+        let event = RewindEvent::ProgressNoted {
+            session_id: SessionId::new("sess-1"),
+            task_id: Some(TaskId::new("task-1")),
+            note: "Retry succeeded after increasing timeout".into(),
+            note_type: ProgressNoteType::RetryLearning,
+        };
+
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: RewindEvent = serde_json::from_str(&json).expect("deserialize");
+
+        match back {
+            RewindEvent::ProgressNoted {
+                session_id,
+                task_id,
+                note,
+                note_type,
+            } => {
+                assert_eq!(session_id.to_string(), "sess-1");
+                assert_eq!(task_id.unwrap().to_string(), "task-1");
+                assert_eq!(note, "Retry succeeded after increasing timeout");
+                assert_eq!(note_type, ProgressNoteType::RetryLearning);
+            }
+            other => panic!("expected ProgressNoted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn progress_noted_without_task_id() {
+        let event = RewindEvent::ProgressNoted {
+            session_id: SessionId::new("sess-2"),
+            task_id: None,
+            note: "General observation".into(),
+            note_type: ProgressNoteType::Discretionary,
+        };
+
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: RewindEvent = serde_json::from_str(&json).expect("deserialize");
+
+        match back {
+            RewindEvent::ProgressNoted { task_id, note_type, .. } => {
+                assert!(task_id.is_none());
+                assert_eq!(note_type, ProgressNoteType::Discretionary);
+            }
+            other => panic!("expected ProgressNoted, got {other:?}"),
+        }
+    }
+}
