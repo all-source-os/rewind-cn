@@ -4,6 +4,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
+use std::time::Instant;
 
 use crate::application::commands::{AssignTask, CompleteTask, FailTask, StartTask};
 use crate::domain::error::RewindError;
@@ -137,6 +138,8 @@ impl Orchestrator {
             })
             .await?;
 
+        let session_id = SessionId::generate();
+
         info!("Executing: {}", task.title);
 
         // EXECUTE: run coder agent
@@ -145,6 +148,7 @@ impl Orchestrator {
             project_context: self.project_context.as_deref(),
             template_path: self.prompt_template_path.as_deref(),
         };
+        let iteration_start = Instant::now();
         let (tool_calls, agent_output) = self
             .coder
             .execute_task(
@@ -156,6 +160,18 @@ impl Orchestrator {
                 &prompt_ctx,
             )
             .await?;
+        let duration_ms = iteration_start.elapsed().as_millis() as u64;
+
+        // Emit IterationLogged event
+        let _ = engine
+            .append_events(vec![RewindEvent::IterationLogged {
+                session_id: session_id.clone(),
+                task_id: task_id.clone(),
+                iteration_number: 1,
+                agent_output: agent_output.clone(),
+                duration_ms,
+            }])
+            .await;
 
         // Record tool calls as events
         for call in &tool_calls {
@@ -185,7 +201,7 @@ impl Orchestrator {
             engine
                 .complete_task(CompleteTask {
                     task_id: task_id.clone(),
-                    session_id: SessionId::generate(),
+                    session_id: session_id.clone(),
                     discretionary_note: None,
                 })
                 .await?;
@@ -216,7 +232,7 @@ impl Orchestrator {
             engine
                 .fail_task(FailTask {
                     task_id: task_id.clone(),
-                    session_id: SessionId::generate(),
+                    session_id: session_id.clone(),
                     reason: reason.clone(),
                     discretionary_note: None,
                 })
@@ -332,6 +348,8 @@ impl Orchestrator {
             })
             .await?;
 
+        let session_id = SessionId::generate();
+
         info!(
             "Executing in worktree: {} ({})",
             task.title,
@@ -343,6 +361,7 @@ impl Orchestrator {
             project_context: self.project_context.as_deref(),
             template_path: self.prompt_template_path.as_deref(),
         };
+        let iteration_start = Instant::now();
         let (tool_calls, agent_output) = self
             .coder
             .execute_task(
@@ -354,6 +373,18 @@ impl Orchestrator {
                 &prompt_ctx,
             )
             .await?;
+        let duration_ms = iteration_start.elapsed().as_millis() as u64;
+
+        // Emit IterationLogged event
+        let _ = engine
+            .append_events(vec![RewindEvent::IterationLogged {
+                session_id: session_id.clone(),
+                task_id: task_id.clone(),
+                iteration_number: 1,
+                agent_output: agent_output.clone(),
+                duration_ms,
+            }])
+            .await;
 
         for call in &tool_calls {
             let _ = engine
@@ -381,7 +412,7 @@ impl Orchestrator {
             engine
                 .complete_task(CompleteTask {
                     task_id: task_id.clone(),
-                    session_id: SessionId::generate(),
+                    session_id: session_id.clone(),
                     discretionary_note: None,
                 })
                 .await?;
@@ -411,7 +442,7 @@ impl Orchestrator {
             engine
                 .fail_task(FailTask {
                     task_id: task_id.clone(),
-                    session_id: SessionId::generate(),
+                    session_id: session_id.clone(),
                     reason: reason.clone(),
                     discretionary_note: None,
                 })
@@ -556,6 +587,78 @@ pub fn tool_calls_to_events(task_id: &TaskId, records: &[ToolCallRecord]) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn iteration_logged_event_emitted_with_correct_fields() {
+        let engine = RewindEngine::in_memory().await;
+
+        let session_id = SessionId::new("sess-iter-1");
+        let task_id = TaskId::new("task-iter-1");
+
+        // Emit an IterationLogged event (as the orchestrator would)
+        engine
+            .append_events(vec![RewindEvent::IterationLogged {
+                session_id: session_id.clone(),
+                task_id: task_id.clone(),
+                iteration_number: 1,
+                agent_output: "Implemented the handler".into(),
+                duration_ms: 3200,
+            }])
+            .await
+            .unwrap();
+
+        // Emit a second iteration with incremented number
+        engine
+            .append_events(vec![RewindEvent::IterationLogged {
+                session_id: session_id.clone(),
+                task_id: task_id.clone(),
+                iteration_number: 2,
+                agent_output: "Fixed test failures".into(),
+                duration_ms: 1500,
+            }])
+            .await
+            .unwrap();
+
+        // Read back all events from the store
+        let events = engine.event_store.get_all_events().await.unwrap();
+        let iteration_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, RewindEvent::IterationLogged { .. }))
+            .collect();
+
+        assert_eq!(iteration_events.len(), 2, "Should have 2 IterationLogged events");
+
+        match &iteration_events[0] {
+            RewindEvent::IterationLogged {
+                session_id: sid,
+                task_id: tid,
+                iteration_number,
+                agent_output,
+                duration_ms,
+            } => {
+                assert_eq!(sid.to_string(), "sess-iter-1");
+                assert_eq!(tid.to_string(), "task-iter-1");
+                assert_eq!(*iteration_number, 1);
+                assert_eq!(agent_output, "Implemented the handler");
+                assert_eq!(*duration_ms, 3200);
+            }
+            _ => panic!("Expected IterationLogged"),
+        }
+
+        match &iteration_events[1] {
+            RewindEvent::IterationLogged {
+                iteration_number,
+                agent_output,
+                duration_ms,
+                ..
+            } => {
+                assert_eq!(*iteration_number, 2);
+                assert_eq!(agent_output, "Fixed test failures");
+                assert_eq!(*duration_ms, 1500);
+            }
+            _ => panic!("Expected IterationLogged"),
+        }
+    }
 
     #[test]
     fn tool_calls_to_events_converts() {
