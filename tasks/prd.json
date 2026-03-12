@@ -1,0 +1,259 @@
+{
+  "name": "Ralph-TUI Setup Parity for Rewind",
+  "branchName": "feature/ralph-tui-setup-parity",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add Tera prompt template engine",
+      "description": "As a developer, I want rewind to use Tera templates for agent prompts so that I can customize what context agents receive.",
+      "acceptanceCriteria": [
+        "tera crate added to Cargo.toml dependencies",
+        "New module infrastructure/prompt_template.rs exists and compiles",
+        "render_prompt(template_path, context_map) -> Result<String> function implemented",
+        "Supports a context map of HashMap<String, String> for arbitrary key-value injection",
+        "Default template embedded via include_str! if no custom template file exists",
+        "cargo check passes"
+      ],
+      "priority": 1,
+      "labels": [
+        "backend"
+      ],
+      "passes": true,
+      "dependsOn": [],
+      "completionNotes": "Completed by agent"
+    },
+    {
+      "id": "US-002",
+      "title": "Create default prompt template",
+      "description": "As a developer, I want a sensible default prompt template shipped with rewind so that agents work well out of the box.",
+      "acceptanceCriteria": [
+        "Default template file at src/infrastructure/default_prompt.tera exists",
+        "Template includes variables: {{task}}, {{epic}}, {{progress}}, {{project_context}}",
+        "Template compiles and renders with all variables populated",
+        "Template compiles and renders with optional variables missing (graceful defaults)",
+        "Unit test verifies rendering with full and partial context",
+        "cargo check passes"
+      ],
+      "priority": 1,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Wire prompt template into coder agent",
+      "description": "As a developer, I want the coder agent to use the Tera template engine instead of hardcoded prompts so that prompts are customizable.",
+      "acceptanceCriteria": [
+        "coder.rs calls render_prompt() instead of using hardcoded prompt strings",
+        "Context map populated with task title, epic name, and project context from session",
+        "Custom template path read from rewind.toml if specified, otherwise uses default",
+        "Existing agent behavior unchanged when using default template (output equivalent)",
+        "cargo check passes"
+      ],
+      "priority": 2,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Add ProgressNoted event",
+      "description": "As a developer, I want a ProgressNoted event in the domain so that agent learnings are captured in the event store.",
+      "acceptanceCriteria": [
+        "ProgressNoted variant added to RewindEvent enum",
+        "Fields: session_id, task_id (optional), note: String, note_type: ProgressNoteType",
+        "ProgressNoteType enum: TaskCompleted, TaskFailed, RetryLearning, Discretionary",
+        "event_type_name() returns rewind.domain.progress_noted",
+        "Serialization/deserialization roundtrip test passes",
+        "cargo check passes"
+      ],
+      "priority": 1,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": []
+    },
+    {
+      "id": "US-005",
+      "title": "Emit ProgressNoted events from handlers",
+      "description": "As a developer, I want command handlers to automatically emit ProgressNoted events on task completion and failure so that learnings accumulate without agent effort.",
+      "acceptanceCriteria": [
+        "complete_task handler emits ProgressNoted with note_type: TaskCompleted",
+        "Task failure/retry paths emit ProgressNoted with note_type: TaskFailed or RetryLearning",
+        "Handlers accept an optional discretionary_note: Option<String> for agent-chosen notes",
+        "When discretionary note is provided, an additional ProgressNoted event with note_type: Discretionary is emitted",
+        "Unit tests verify events are emitted for each path",
+        "cargo check passes"
+      ],
+      "priority": 2,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": [
+        "US-004"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Project progress into prompt context",
+      "description": "As a developer, I want progress notes projected from the event store and injected into the prompt template so that agents benefit from past learnings.",
+      "acceptanceCriteria": [
+        "New projection function: project_progress_notes(events) -> String in application layer",
+        "Projects recent ProgressNoted events into a markdown-formatted summary",
+        "Summary is injected as {{progress}} variable in the prompt template context",
+        "Configurable limit on how many notes to include (default: last 20)",
+        "Unit test verifies projection output format",
+        "cargo check passes"
+      ],
+      "priority": 3,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": [
+        "US-004",
+        "US-005",
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Add IterationLogged event",
+      "description": "As a developer, I want an IterationLogged event so that every agent iteration is recorded in the event store for debugging.",
+      "acceptanceCriteria": [
+        "IterationLogged variant added to RewindEvent enum",
+        "Fields: session_id, task_id, iteration_number: u32, agent_output: String, duration_ms: u64",
+        "event_type_name() returns rewind.domain.iteration_logged",
+        "Serialization/deserialization roundtrip test passes",
+        "cargo check passes"
+      ],
+      "priority": 1,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": []
+    },
+    {
+      "id": "US-008",
+      "title": "Emit IterationLogged events from agent runner",
+      "description": "As a developer, I want the agent runner to emit IterationLogged events after each iteration so that execution history is queryable.",
+      "acceptanceCriteria": [
+        "Agent execution loop in infrastructure layer emits IterationLogged after each iteration",
+        "iteration_number increments correctly across iterations within a session",
+        "agent_output captures the agent's response text",
+        "duration_ms measures wall-clock time of the iteration",
+        "Unit test verifies event emission with correct fields",
+        "cargo check passes"
+      ],
+      "priority": 2,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": [
+        "US-007"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Implement two-tier quality gate runner",
+      "description": "As a developer, I want the gate runner to distinguish between epic-level and story-level gates so that expensive checks only run once at epic completion.",
+      "acceptanceCriteria": [
+        "QualityGateLevel enum added: Epic, Story",
+        "Gate configuration in rewind.toml supports [gates.epic] and [gates.story] sections",
+        "run_gates(level: QualityGateLevel) function runs only gates for the specified level",
+        "Story completion triggers story-level gates only (cargo check)",
+        "Epic completion triggers epic-level gates (cargo test && cargo clippy && cargo fmt --check)",
+        "Existing gate_runner.rs refactored to support the two tiers",
+        "Unit test verifies correct gate selection per level",
+        "cargo check passes"
+      ],
+      "priority": 2,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": [
+        "US-010"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "Extend rewind.toml configuration",
+      "description": "As a developer, I want new config fields in rewind.toml so that prompt templates, iteration limits, and tracing are configurable.",
+      "acceptanceCriteria": [
+        "prompt_template field added (optional path to .tera file)",
+        "max_iterations field added (u32, default: 10)",
+        "subagent_tracing_detail field added (enum: minimal, normal, verbose, default: normal)",
+        "[gates.epic] and [gates.story] sections added with commands arrays",
+        "Existing config parsing remains backwards-compatible (new fields are optional with defaults)",
+        "Config deserialization test with all new fields",
+        "Config deserialization test with no new fields (defaults applied)",
+        "cargo check passes"
+      ],
+      "priority": 1,
+      "labels": [
+        "backend"
+      ],
+      "passes": false,
+      "dependsOn": []
+    },
+    {
+      "id": "US-011",
+      "title": "Add MCP query for iteration history",
+      "description": "As a developer, I want an MCP tool to query iteration logs so that I can debug agent sessions externally.",
+      "acceptanceCriteria": [
+        "New MCP tool rewind_list_iterations accepts session_id parameter",
+        "Returns iteration number, duration, and truncated output for each iteration",
+        "Supports format: toon for token-optimized output",
+        "Integration test verifies tool returns correct data for a session with multiple iterations",
+        "cargo check passes"
+      ],
+      "priority": 3,
+      "labels": [
+        "integration"
+      ],
+      "passes": false,
+      "dependsOn": [
+        "US-007",
+        "US-008"
+      ]
+    },
+    {
+      "id": "US-012",
+      "title": "Add MCP query for progress notes",
+      "description": "As a developer, I want an MCP tool to query progress notes so that learnings are accessible outside the agent loop.",
+      "acceptanceCriteria": [
+        "New MCP tool rewind_list_progress accepts optional session_id and note_type filters",
+        "Returns note text, type, timestamp, and associated task ID",
+        "Supports format: toon for token-optimized output",
+        "Integration test verifies filtering by note type",
+        "cargo check passes"
+      ],
+      "priority": 3,
+      "labels": [
+        "integration"
+      ],
+      "passes": false,
+      "dependsOn": [
+        "US-004",
+        "US-005"
+      ]
+    }
+  ],
+  "metadata": {
+    "updatedAt": "2026-03-12T17:18:34.706Z"
+  }
+}

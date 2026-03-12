@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "sessionId": "d34a24b9-3415-4a03-8832-4a246949406e",
+  "status": "running",
+  "startedAt": "2026-03-12T17:14:32.755Z",
+  "updatedAt": "2026-03-12T17:18:34.708Z",
+  "currentIteration": 0,
+  "maxIterations": 0,
+  "tasksCompleted": 0,
+  "isPaused": false,
+  "agentPlugin": "claude",
+  "trackerState": {
+    "plugin": "json",
+    "prdPath": "./tasks/prd.json",
+    "totalTasks": 12,
+    "tasks": [
+      {
+        "id": "US-001",
+        "title": "Add Tera prompt template engine",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-002",
+        "title": "Create default prompt template",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-003",
+        "title": "Wire prompt template into coder agent",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-004",
+        "title": "Add ProgressNoted event",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-005",
+        "title": "Emit ProgressNoted events from handlers",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-006",
+        "title": "Project progress into prompt context",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-007",
+        "title": "Add IterationLogged event",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-008",
+        "title": "Emit IterationLogged events from agent runner",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-009",
+        "title": "Implement two-tier quality gate runner",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-010",
+        "title": "Extend rewind.toml configuration",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-011",
+        "title": "Add MCP query for iteration history",
+        "status": "open",
+        "completedInSession": false
+      },
+      {
+        "id": "US-012",
+        "title": "Add MCP query for progress notes",
+        "status": "open",
+        "completedInSession": false
+      }
+    ]
+  },
+  "iterations": [],
+  "skippedTaskIds": [],
+  "cwd": "/Users/decebaldobrica/Projects/chronos/rewind-cn",
+  "activeTaskIds": [],
+  "subagentPanelVisible": false
+}
