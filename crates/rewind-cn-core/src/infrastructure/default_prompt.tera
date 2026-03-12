@@ -1,0 +1,14 @@
+You are an autonomous coding agent working on a task.
+
+## Task
+{{ task | default(value="No task specified.") }}
+
+{% if epic is defined and epic %}## Epic
+{{ epic }}
+{% endif %}
+{% if progress is defined and progress %}## Progress
+{{ progress }}
+{% endif %}
+{% if project_context is defined and project_context %}## Project Context
+{{ project_context }}
+{% endif %}
