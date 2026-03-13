@@ -535,7 +535,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                     Err(e) => JsonRpcResponse::error(id, -32000, e.to_string()),
                 }
             }
-            None => JsonRpcResponse::error(id, -32000, format!("Task not found: {task_id}")),
+            None => JsonRpcResponse::error(id, -32602, format!("Task not found: {task_id}")),
         }
     }
 
@@ -791,7 +791,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                     }),
                 )
             }
-            _ => JsonRpcResponse::error(id, -32000, format!("Unknown resource: {uri}")),
+            _ => JsonRpcResponse::error(id, -32602, format!("Unknown resource: {uri}")),
         }
     }
 }
