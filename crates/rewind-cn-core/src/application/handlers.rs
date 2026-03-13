@@ -71,6 +71,12 @@ pub fn handle_complete_task(cmd: CompleteTask) -> Result<Vec<RewindEvent>, Rewin
 }
 
 pub fn handle_fail_task(cmd: FailTask) -> Result<Vec<RewindEvent>, RewindError> {
+    if cmd.reason.trim().is_empty() {
+        return Err(RewindError::validation(
+            "reason",
+            "Failure reason cannot be empty",
+        ));
+    }
     let mut events = vec![RewindEvent::TaskFailed {
         task_id: cmd.task_id.clone(),
         reason: cmd.reason.clone(),
@@ -303,5 +309,27 @@ mod tests {
             }
             _ => panic!("Expected ProgressNoted Discretionary"),
         }
+    }
+
+    #[test]
+    fn fail_task_rejects_empty_reason() {
+        let result = handle_fail_task(FailTask {
+            task_id: TaskId::new("t-1"),
+            session_id: SessionId::new("s-1"),
+            reason: "".into(),
+            discretionary_note: None,
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fail_task_rejects_whitespace_only_reason() {
+        let result = handle_fail_task(FailTask {
+            task_id: TaskId::new("t-1"),
+            session_id: SessionId::new("s-1"),
+            reason: "   ".into(),
+            discretionary_note: None,
+        });
+        assert!(result.is_err());
     }
 }
