@@ -23,31 +23,31 @@ fn wants_toon(args: &Value) -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
-    jsonrpc: String,
-    id: Option<Value>,
-    method: String,
+pub struct JsonRpcRequest {
+    pub jsonrpc: String,
+    pub id: Option<Value>,
+    pub method: String,
     #[serde(default)]
-    params: Value,
+    pub params: Value,
 }
 
-#[derive(Debug, Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: String,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsonRpcResponse {
+    pub jsonrpc: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Value>,
+    pub id: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
+    pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
+    pub error: Option<JsonRpcError>,
 }
 
-#[derive(Debug, Serialize)]
-struct JsonRpcError {
-    code: i64,
-    message: String,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsonRpcError {
+    pub code: i64,
+    pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<Value>,
+    pub data: Option<Value>,
 }
 
 impl JsonRpcResponse {
@@ -128,7 +128,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
         Ok(())
     }
 
-    async fn handle_request(&self, req: JsonRpcRequest) -> JsonRpcResponse {
+    pub async fn handle_request(&self, req: JsonRpcRequest) -> JsonRpcResponse {
         if req.jsonrpc != "2.0" {
             return JsonRpcResponse::error(req.id, -32600, "Invalid JSON-RPC version");
         }
@@ -274,7 +274,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
                                 },
                                 "note_type": {
                                     "type": "string",
-                                    "description": "Optional note type filter: TaskCompleted, TaskFailed, RetryLearning, Discretionary"
+                                    "description": "Optional note type filter: TaskCompleted, TaskFailed, Discretionary"
                                 },
                                 "format": {
                                     "type": "string",
