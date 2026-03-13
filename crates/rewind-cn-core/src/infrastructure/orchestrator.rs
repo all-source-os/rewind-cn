@@ -257,7 +257,7 @@ impl Orchestrator {
         let duration_ms = iteration_start.elapsed().as_millis() as u64;
 
         // Emit IterationLogged event
-        let _ = engine
+        if let Err(e) = engine
             .append_events(vec![RewindEvent::IterationLogged {
                 session_id: session_id.clone(),
                 task_id: task_id.clone(),
@@ -265,11 +265,14 @@ impl Orchestrator {
                 agent_output: agent_output.clone(),
                 duration_ms,
             }])
-            .await;
+            .await
+        {
+            warn!("Failed to append IterationLogged event: {e}");
+        }
 
         // Record tool calls as events
         for call in &tool_calls {
-            let _ = engine
+            if let Err(e) = engine
                 .append_events(vec![RewindEvent::AgentToolCall {
                     task_id: task_id.clone(),
                     tool_name: call.tool_name.clone(),
@@ -277,7 +280,10 @@ impl Orchestrator {
                     result_summary: call.result_summary.clone(),
                     called_at: Utc::now(),
                 }])
-                .await;
+                .await
+            {
+                warn!("Failed to append AgentToolCall event: {e}");
+            }
         }
 
         // EVALUATE: run evaluator agent
@@ -303,13 +309,16 @@ impl Orchestrator {
             // Mark checked criteria
             for cr in &eval_result.criteria_results {
                 if cr.passed {
-                    let _ = engine
+                    if let Err(e) = engine
                         .append_events(vec![RewindEvent::CriterionChecked {
                             task_id: task_id.clone(),
                             criterion_index: cr.index,
                             checked_at: Utc::now(),
                         }])
-                        .await;
+                        .await
+                    {
+                        warn!("Failed to append CriterionChecked event: {e}");
+                    }
                 }
             }
 

@@ -2,18 +2,13 @@ use rewind_cn_core::infrastructure::llm::AgentConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TracingDetail {
     Minimal,
+    #[default]
     Normal,
     Verbose,
-}
-
-impl Default for TracingDetail {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

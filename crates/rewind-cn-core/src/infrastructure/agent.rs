@@ -100,14 +100,17 @@ impl AgentWorker {
                 if self.use_chronis {
                     let _ = ChronisBridge::fail(&task_id_str, &e.to_string());
                 }
-                let _ = engine
+                if let Err(fail_err) = engine
                     .fail_task(FailTask {
                         task_id,
                         session_id: SessionId::generate(),
                         reason: e.to_string(),
                         discretionary_note: None,
                     })
-                    .await;
+                    .await
+                {
+                    warn!("Failed to record task failure event: {fail_err}");
+                }
                 Err(e)
             }
         }

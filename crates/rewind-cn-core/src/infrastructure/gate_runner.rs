@@ -143,7 +143,7 @@ impl QualityGateRunner {
         for gate in &filtered {
             let result = self.run_gate(gate).await;
 
-            let _ = engine
+            if let Err(e) = engine
                 .append_events(vec![RewindEvent::QualityGateRan {
                     epic_id: epic_id.clone(),
                     command: result.command.clone(),
@@ -151,7 +151,10 @@ impl QualityGateRunner {
                     output: result.output.clone(),
                     ran_at: Utc::now(),
                 }])
-                .await;
+                .await
+            {
+                warn!("Failed to append QualityGateRan event: {e}");
+            }
 
             if result.passed {
                 info!("Gate passed: {}", result.command);
