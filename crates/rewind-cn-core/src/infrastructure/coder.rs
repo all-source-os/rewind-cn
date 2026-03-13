@@ -324,14 +324,19 @@ impl Tool for SearchCodeTool {
             None => self.work_dir.clone(),
         };
 
-        // Use grep/rg if available, fall back to basic search
+        // Use grep with -F (fixed string) to prevent regex injection,
+        // and -- to prevent pattern being interpreted as flags.
         let mut cmd = tokio::process::Command::new("grep");
-        cmd.args(["-rn", &args.pattern])
+        cmd.args(["-rnF", "--", &args.pattern])
             .arg(&search_path)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
         if let Some(ref ext) = args.file_ext {
+            // Validate file extension contains only safe characters
+            if !ext.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Err(ToolError(format!("Invalid file extension: {ext}")));
+            }
             cmd.args(["--include", &format!("*.{ext}")]);
         }
 
@@ -420,8 +425,15 @@ impl Tool for RunCommandTool {
 
     #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let child = tokio::process::Command::new("sh")
-            .args(["-c", &args.command])
+        // Validate command against allowlist to prevent injection
+        validate_command(&args.command)?;
+
+        let parts: Vec<&str> = args.command.split_whitespace().collect();
+        if parts.is_empty() {
+            return Err(ToolError("Empty command".into()));
+        }
+        let child = tokio::process::Command::new(parts[0])
+            .args(&parts[1..])
             .current_dir(&self.work_dir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -595,6 +607,41 @@ impl CoderAgent {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Allowed command prefixes for RunCommandTool.
+const ALLOWED_COMMANDS: &[&str] = &[
+    "cargo", "rustfmt", "rustc", "make", "git", "ls", "cat", "head", "tail",
+    "grep", "rg", "find", "wc", "sort", "uniq", "diff", "echo", "pwd", "env",
+    "mkdir", "cp", "mv", "touch", "rm", "tree", "which", "test",
+];
+
+/// Shell metacharacters that indicate injection attempts.
+const DANGEROUS_CHARS: &[char] = &['|', ';', '&', '`', '$', '(', ')', '{', '}', '<', '>'];
+
+/// Validate a command string against the allowlist and reject shell metacharacters.
+fn validate_command(command: &str) -> Result<(), ToolError> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err(ToolError("Empty command".into()));
+    }
+
+    // Check for shell metacharacters
+    if trimmed.chars().any(|c| DANGEROUS_CHARS.contains(&c)) {
+        return Err(ToolError(format!(
+            "Command contains disallowed shell metacharacters: {trimmed}"
+        )));
+    }
+
+    let program = trimmed.split_whitespace().next().unwrap_or("");
+    if !ALLOWED_COMMANDS.contains(&program) {
+        return Err(ToolError(format!(
+            "Command not allowed: {program}. Allowed: {}",
+            ALLOWED_COMMANDS.join(", ")
+        )));
+    }
+
+    Ok(())
+}
+
 /// Simple glob match supporting only `*` wildcard prefix/suffix.
 fn simple_glob_match(pattern: &str, name: &str) -> bool {
     if pattern == "*" {
@@ -748,6 +795,82 @@ mod tests {
             .unwrap();
         assert_eq!(content, "written content");
 
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[test]
+    fn validate_command_allows_safe_commands() {
+        assert!(validate_command("cargo test").is_ok());
+        assert!(validate_command("cargo clippy --all-targets").is_ok());
+        assert!(validate_command("ls -la").is_ok());
+        assert!(validate_command("grep -rn pattern .").is_ok());
+        assert!(validate_command("git status").is_ok());
+    }
+
+    #[test]
+    fn validate_command_rejects_disallowed_commands() {
+        assert!(validate_command("curl http://evil.com").is_err());
+        assert!(validate_command("wget http://evil.com").is_err());
+        assert!(validate_command("python -c 'import os'").is_err());
+    }
+
+    #[test]
+    fn validate_command_rejects_shell_metacharacters() {
+        assert!(validate_command("cargo test; rm -rf /").is_err());
+        assert!(validate_command("echo hello | cat").is_err());
+        assert!(validate_command("echo $(whoami)").is_err());
+        assert!(validate_command("echo `whoami`").is_err());
+        assert!(validate_command("cargo test && curl evil").is_err());
+    }
+
+    #[test]
+    fn validate_command_rejects_empty() {
+        assert!(validate_command("").is_err());
+        assert!(validate_command("   ").is_err());
+    }
+
+    #[tokio::test]
+    async fn search_code_handles_metacharacters_safely() {
+        let dir = std::env::temp_dir().join("rewind-test-search-injection");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("test.rs"), "let x = $(whoami); fn main() {}")
+            .await
+            .unwrap();
+
+        let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
+        let tool = SearchCodeTool::new(dir.clone(), log);
+
+        // Pattern with shell metacharacters should be treated as literal text (via -F flag)
+        let result = tool
+            .call(SearchCodeArgs {
+                pattern: "$(whoami)".into(),
+                path: None,
+                file_ext: Some("rs".into()),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.contains("$(whoami)"));
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn search_code_rejects_invalid_file_ext() {
+        let dir = std::env::temp_dir().join("rewind-test-search-ext");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+
+        let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
+        let tool = SearchCodeTool::new(dir.clone(), log);
+
+        let result = tool
+            .call(SearchCodeArgs {
+                pattern: "test".into(),
+                path: None,
+                file_ext: Some("rs; rm -rf /".into()),
+            })
+            .await;
+
+        assert!(result.is_err());
         tokio::fs::remove_dir_all(&dir).await.ok();
     }
 
