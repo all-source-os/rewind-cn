@@ -149,7 +149,7 @@ async fn progress_notes_filters_by_note_type() {
     assert!(disc_notes[0].note.contains("imports"));
 
     // Filter by non-existent type returns empty
-    let empty = analytics.progress_notes(None, Some("RetryLearning"));
+    let empty = analytics.progress_notes(None, Some("NonExistent"));
     assert!(empty.is_empty());
 }
 
@@ -354,4 +354,37 @@ async fn progress_notes_survive_rebuild() {
     let analytics = analytics.read().await;
     let notes = analytics.progress_notes(None, None);
     assert_eq!(notes.len(), 1, "Should survive rebuild");
+}
+
+#[tokio::test]
+async fn progress_notes_without_task_id() {
+    use rewind_cn_core::domain::events::ProgressNoteType;
+
+    let engine = RewindEngine::in_memory().await;
+
+    let session_events = engine.start_session().await.unwrap();
+    let session_id = match &session_events[0] {
+        RewindEvent::SessionStarted { session_id, .. } => session_id.clone(),
+        _ => panic!("Expected SessionStarted"),
+    };
+
+    // Emit a ProgressNoted event with task_id: None
+    engine
+        .append_events(vec![RewindEvent::ProgressNoted {
+            session_id: session_id.clone(),
+            task_id: None,
+            note: "Session-level observation".into(),
+            note_type: ProgressNoteType::Discretionary,
+            noted_at: chrono::Utc::now(),
+        }])
+        .await
+        .unwrap();
+
+    let analytics = engine.analytics();
+    let analytics = analytics.read().await;
+    let notes = analytics.progress_notes(None, None);
+
+    assert_eq!(notes.len(), 1);
+    assert!(notes[0].task_id.is_none(), "task_id should be None");
+    assert_eq!(notes[0].note, "Session-level observation");
 }

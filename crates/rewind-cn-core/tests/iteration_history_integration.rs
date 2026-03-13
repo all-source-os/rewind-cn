@@ -162,3 +162,86 @@ async fn iteration_history_survives_rebuild() {
     assert_eq!(iterations.len(), 1, "Should survive rebuild");
     assert_eq!(iterations[0].iteration_number, 1);
 }
+
+#[tokio::test]
+async fn iteration_history_multiple_tasks_in_same_session() {
+    let engine = RewindEngine::in_memory().await;
+
+    // Start session
+    let session_events = engine.start_session().await.unwrap();
+    let session_id = match &session_events[0] {
+        RewindEvent::SessionStarted { session_id, .. } => session_id.clone(),
+        _ => panic!("Expected SessionStarted"),
+    };
+
+    // Create two tasks
+    let t1_events = engine
+        .create_task(CreateTask {
+            title: "Task A".into(),
+            description: "".into(),
+            epic_id: None,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    let t1 = match &t1_events[0] {
+        RewindEvent::TaskCreated { task_id, .. } => task_id.clone(),
+        _ => panic!("Expected TaskCreated"),
+    };
+
+    let t2_events = engine
+        .create_task(CreateTask {
+            title: "Task B".into(),
+            description: "".into(),
+            epic_id: None,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    let t2 = match &t2_events[0] {
+        RewindEvent::TaskCreated { task_id, .. } => task_id.clone(),
+        _ => panic!("Expected TaskCreated"),
+    };
+
+    // Log iterations for both tasks under same session
+    engine
+        .append_events(vec![
+            RewindEvent::IterationLogged {
+                session_id: session_id.clone(),
+                task_id: t1.clone(),
+                iteration_number: 1,
+                agent_output: "Task A iteration 1".into(),
+                duration_ms: 1000,
+            },
+            RewindEvent::IterationLogged {
+                session_id: session_id.clone(),
+                task_id: t2.clone(),
+                iteration_number: 1,
+                agent_output: "Task B iteration 1".into(),
+                duration_ms: 2000,
+            },
+            RewindEvent::IterationLogged {
+                session_id: session_id.clone(),
+                task_id: t1.clone(),
+                iteration_number: 2,
+                agent_output: "Task A iteration 2".into(),
+                duration_ms: 1500,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let analytics = engine.analytics();
+    let analytics = analytics.read().await;
+    let iterations = analytics.iteration_history(session_id.as_ref());
+
+    assert_eq!(iterations.len(), 3, "Should have iterations from both tasks");
+    // Verify both task IDs are present
+    let task_ids: Vec<String> = iterations.iter().map(|i| i.task_id.to_string()).collect();
+    assert!(task_ids.contains(&t1.to_string()));
+    assert!(task_ids.contains(&t2.to_string()));
+}

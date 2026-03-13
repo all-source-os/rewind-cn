@@ -295,6 +295,31 @@ mod tests {
     }
 
     #[test]
+    fn execution_config_defaults_are_correct() {
+        let config = ExecutionConfig::default();
+        assert_eq!(config.max_concurrent, 3);
+        assert_eq!(config.timeout_secs, 300);
+        assert_eq!(config.max_retries, 2);
+    }
+
+    #[test]
+    fn load_missing_file_returns_error() {
+        let result = RewindConfig::load(Path::new("/nonexistent/rewind.toml"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read config"));
+    }
+
+    #[test]
+    fn load_invalid_toml_returns_parse_error() {
+        let path = std::env::temp_dir().join("rewind-test-bad.toml");
+        std::fs::write(&path, "this is not = [valid toml").unwrap();
+        let result = RewindConfig::load(&path);
+        std::fs::remove_file(&path).ok();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to parse config"));
+    }
+
+    #[test]
     fn parse_config_with_no_new_fields_applies_defaults() {
         let toml_str = r#"
             project_name = "minimal"
