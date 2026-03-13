@@ -105,146 +105,14 @@ impl Orchestrator {
 
     /// Execute a single task through the full SELECT → PROMPT → EXECUTE → EVALUATE loop.
     ///
-    /// Returns the tool call records and whether the task passed evaluation.
+    /// Returns whether the task passed evaluation.
     #[hotpath::measure]
     pub async fn execute_task<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
         &self,
         task: &TaskView,
         engine: &RewindEngine<B>,
     ) -> Result<bool, RewindError> {
-        let task_id = &task.task_id;
-        let task_id_str = task_id.to_string();
-
-        // Chronis claim (best-effort)
-        if self.use_chronis {
-            match ChronisBridge::claim(&task_id_str) {
-                Ok(ack) => debug!("Chronis claim: {ack}"),
-                Err(e) => warn!("Chronis claim failed (continuing): {e}"),
-            }
-        }
-
-        // ASSIGN
-        engine
-            .assign_task(AssignTask {
-                task_id: task_id.clone(),
-                agent_id: self.agent_id.clone(),
-            })
-            .await?;
-
-        // START
-        engine
-            .start_task(StartTask {
-                task_id: task_id.clone(),
-            })
-            .await?;
-
-        let session_id = SessionId::generate();
-
-        info!("Executing: {}", task.title);
-
-        // EXECUTE: run coder agent
-        let prompt_ctx = PromptContext {
-            epic_name: self.epic_name.as_deref(),
-            project_context: self.project_context.as_deref(),
-            template_path: self.prompt_template_path.as_deref(),
-            ..Default::default()
-        };
-        let iteration_start = Instant::now();
-        let (tool_calls, agent_output) = self
-            .coder
-            .execute_task(
-                &task.title,
-                &task.description,
-                &task.acceptance_criteria,
-                self.work_dir.clone(),
-                self.timeout_secs,
-                &prompt_ctx,
-            )
-            .await?;
-        let duration_ms = iteration_start.elapsed().as_millis() as u64;
-
-        // Emit IterationLogged event
-        let _ = engine
-            .append_events(vec![RewindEvent::IterationLogged {
-                session_id: session_id.clone(),
-                task_id: task_id.clone(),
-                iteration_number: 1,
-                agent_output: agent_output.clone(),
-                duration_ms,
-            }])
-            .await;
-
-        // Record tool calls as events
-        for call in &tool_calls {
-            let _ = engine
-                .append_events(vec![RewindEvent::AgentToolCall {
-                    task_id: task_id.clone(),
-                    tool_name: call.tool_name.clone(),
-                    args_summary: call.args_summary.clone(),
-                    result_summary: call.result_summary.clone(),
-                    called_at: Utc::now(),
-                }])
-                .await;
-        }
-
-        // EVALUATE: run evaluator agent
-        let eval_result = self
-            .evaluator
-            .evaluate(
-                &task.description,
-                &task.acceptance_criteria,
-                &tool_calls,
-                &agent_output,
-            )
-            .await?;
-
-        if eval_result.passed {
-            engine
-                .complete_task(CompleteTask {
-                    task_id: task_id.clone(),
-                    session_id: session_id.clone(),
-                    discretionary_note: None,
-                })
-                .await?;
-
-            // Mark checked criteria
-            for cr in &eval_result.criteria_results {
-                if cr.passed {
-                    let _ = engine
-                        .append_events(vec![RewindEvent::CriterionChecked {
-                            task_id: task_id.clone(),
-                            criterion_index: cr.index,
-                            checked_at: Utc::now(),
-                        }])
-                        .await;
-                }
-            }
-
-            if self.use_chronis {
-                match ChronisBridge::done(&task_id_str) {
-                    Ok(ack) => debug!("Chronis done: {ack}"),
-                    Err(e) => warn!("Chronis done failed: {e}"),
-                }
-            }
-
-            Ok(true)
-        } else {
-            let reason = eval_result.summary.clone();
-            engine
-                .fail_task(FailTask {
-                    task_id: task_id.clone(),
-                    session_id: session_id.clone(),
-                    reason: reason.clone(),
-                    discretionary_note: None,
-                })
-                .await?;
-
-            if self.use_chronis {
-                let _ = ChronisBridge::fail(&task_id_str, &reason);
-            }
-
-            Ok(false)
-        }
+        self.execute_task_impl(task, engine, None).await
     }
 
     /// Execute all runnable tasks up to max_concurrent.
@@ -326,9 +194,21 @@ impl Orchestrator {
         engine: &RewindEngine<B>,
         work_dir: PathBuf,
     ) -> Result<bool, RewindError> {
+        self.execute_task_impl(task, engine, Some(work_dir)).await
+    }
+
+    /// Shared implementation for execute_task and execute_task_in_dir.
+    async fn execute_task_impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
+        &self,
+        task: &TaskView,
+        engine: &RewindEngine<B>,
+        work_dir_override: Option<PathBuf>,
+    ) -> Result<bool, RewindError> {
         let task_id = &task.task_id;
         let task_id_str = task_id.to_string();
+        let work_dir = work_dir_override.unwrap_or_else(|| self.work_dir.clone());
 
+        // Chronis claim (best-effort)
         if self.use_chronis {
             match ChronisBridge::claim(&task_id_str) {
                 Ok(ack) => debug!("Chronis claim: {ack}"),
@@ -336,6 +216,7 @@ impl Orchestrator {
             }
         }
 
+        // ASSIGN
         engine
             .assign_task(AssignTask {
                 task_id: task_id.clone(),
@@ -343,6 +224,7 @@ impl Orchestrator {
             })
             .await?;
 
+        // START
         engine
             .start_task(StartTask {
                 task_id: task_id.clone(),
@@ -351,12 +233,9 @@ impl Orchestrator {
 
         let session_id = SessionId::generate();
 
-        info!(
-            "Executing in worktree: {} ({})",
-            task.title,
-            work_dir.display()
-        );
+        info!("Executing: {} ({})", task.title, work_dir.display());
 
+        // EXECUTE: run coder agent
         let prompt_ctx = PromptContext {
             epic_name: self.epic_name.as_deref(),
             project_context: self.project_context.as_deref(),
@@ -388,6 +267,7 @@ impl Orchestrator {
             }])
             .await;
 
+        // Record tool calls as events
         for call in &tool_calls {
             let _ = engine
                 .append_events(vec![RewindEvent::AgentToolCall {
@@ -400,6 +280,7 @@ impl Orchestrator {
                 .await;
         }
 
+        // EVALUATE: run evaluator agent
         let eval_result = self
             .evaluator
             .evaluate(
@@ -419,6 +300,7 @@ impl Orchestrator {
                 })
                 .await?;
 
+            // Mark checked criteria
             for cr in &eval_result.criteria_results {
                 if cr.passed {
                     let _ = engine
