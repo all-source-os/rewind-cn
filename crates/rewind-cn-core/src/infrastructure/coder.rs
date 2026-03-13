@@ -561,41 +561,32 @@ impl CoderAgent {
         )?;
         let prompt_input = "Begin working on the task. Read relevant files, implement changes, and verify each acceptance criterion.";
 
+        // Macro to avoid duplicating tool setup across provider variants.
+        // Both Anthropic and OpenAI use the same agent builder API but return
+        // different concrete types, so we can't abstract with a trait here.
+        macro_rules! build_and_run {
+            ($client:expr) => {{
+                let agent = $client
+                    .agent(&self.config.coder.model)
+                    .preamble(&system_prompt)
+                    .max_tokens(self.config.coder.max_tokens as u64)
+                    .tool(ReadFileTool::new(work_dir.clone(), log.clone()))
+                    .tool(WriteFileTool::new(work_dir.clone(), log.clone()))
+                    .tool(ListFilesTool::new(work_dir.clone(), log.clone()))
+                    .tool(SearchCodeTool::new(work_dir.clone(), log.clone()))
+                    .tool(RunCommandTool::new(work_dir, timeout_secs, log.clone()))
+                    .build();
+                agent
+                    .prompt(prompt_input)
+                    .max_turns(20)
+                    .await
+                    .map_err(|e| RewindError::Config(format!("Coder agent failed: {e}")))?
+            }};
+        }
+
         let response: String = match &self.client {
-            ProviderClient::Anthropic(c) => {
-                let agent = c
-                    .agent(&self.config.coder.model)
-                    .preamble(&system_prompt)
-                    .max_tokens(self.config.coder.max_tokens as u64)
-                    .tool(ReadFileTool::new(work_dir.clone(), log.clone()))
-                    .tool(WriteFileTool::new(work_dir.clone(), log.clone()))
-                    .tool(ListFilesTool::new(work_dir.clone(), log.clone()))
-                    .tool(SearchCodeTool::new(work_dir.clone(), log.clone()))
-                    .tool(RunCommandTool::new(work_dir, timeout_secs, log.clone()))
-                    .build();
-                agent
-                    .prompt(prompt_input)
-                    .max_turns(20)
-                    .await
-                    .map_err(|e| RewindError::Config(format!("Coder agent failed: {e}")))?
-            }
-            ProviderClient::OpenAI(c) => {
-                let agent = c
-                    .agent(&self.config.coder.model)
-                    .preamble(&system_prompt)
-                    .max_tokens(self.config.coder.max_tokens as u64)
-                    .tool(ReadFileTool::new(work_dir.clone(), log.clone()))
-                    .tool(WriteFileTool::new(work_dir.clone(), log.clone()))
-                    .tool(ListFilesTool::new(work_dir.clone(), log.clone()))
-                    .tool(SearchCodeTool::new(work_dir.clone(), log.clone()))
-                    .tool(RunCommandTool::new(work_dir, timeout_secs, log.clone()))
-                    .build();
-                agent
-                    .prompt(prompt_input)
-                    .max_turns(20)
-                    .await
-                    .map_err(|e| RewindError::Config(format!("Coder agent failed: {e}")))?
-            }
+            ProviderClient::Anthropic(c) => build_and_run!(c),
+            ProviderClient::OpenAI(c) => build_and_run!(c),
         };
 
         let records = log.lock().await.clone();
