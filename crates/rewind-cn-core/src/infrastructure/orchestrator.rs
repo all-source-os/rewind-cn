@@ -414,6 +414,12 @@ impl Orchestrator {
                     let _permit = permit;
                     let task_id = task.task_id.to_string();
 
+                    // RAII guard ensures worktree cleanup even on panic
+                    let _guard = WorktreeGuard {
+                        work_dir: wt_mgr_root.clone(),
+                        task_id: task_id.clone(),
+                    };
+
                     eprintln!("[{task_id}] Starting in worktree...");
 
                     let result = orchestrator
@@ -441,14 +447,15 @@ impl Orchestrator {
                             failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
-
-                    wt_mgr.cleanup(&task_id);
                 }));
             }
 
-            // Wait for all tasks in this batch
+            // Wait for all tasks in this batch, detect panics
             for handle in handles {
-                let _ = handle.await;
+                if let Err(e) = handle.await {
+                    warn!("Task panicked: {e}");
+                    failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             }
         }
 
@@ -460,6 +467,19 @@ impl Orchestrator {
 
     pub fn max_retries(&self) -> u32 {
         self.max_retries
+    }
+}
+
+/// RAII guard that cleans up a worktree when dropped, even on panic.
+struct WorktreeGuard {
+    work_dir: PathBuf,
+    task_id: String,
+}
+
+impl Drop for WorktreeGuard {
+    fn drop(&mut self) {
+        let wt_mgr = WorktreeManager::new(self.work_dir.clone());
+        wt_mgr.cleanup(&self.task_id);
     }
 }
 
