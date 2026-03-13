@@ -47,23 +47,32 @@ pub fn handle_start_task(cmd: StartTask) -> Result<Vec<RewindEvent>, RewindError
 }
 
 pub fn handle_complete_task(cmd: CompleteTask) -> Result<Vec<RewindEvent>, RewindError> {
+    let note_text = format!("Task {} completed", cmd.task_id);
     let mut events = vec![RewindEvent::TaskCompleted {
         task_id: cmd.task_id.clone(),
         completed_at: Utc::now(),
     }];
-    events.push(RewindEvent::ProgressNoted {
-        session_id: cmd.session_id.clone(),
-        task_id: Some(cmd.task_id.clone()),
-        note: format!("Task {} completed", cmd.task_id),
-        note_type: ProgressNoteType::TaskCompleted,
-        noted_at: Utc::now(),
-    });
     if let Some(note) = cmd.discretionary_note {
+        events.push(RewindEvent::ProgressNoted {
+            session_id: cmd.session_id.clone(),
+            task_id: Some(cmd.task_id.clone()),
+            note: note_text,
+            note_type: ProgressNoteType::TaskCompleted,
+            noted_at: Utc::now(),
+        });
         events.push(RewindEvent::ProgressNoted {
             session_id: cmd.session_id,
             task_id: Some(cmd.task_id),
             note,
             note_type: ProgressNoteType::Discretionary,
+            noted_at: Utc::now(),
+        });
+    } else {
+        events.push(RewindEvent::ProgressNoted {
+            session_id: cmd.session_id,
+            task_id: Some(cmd.task_id),
+            note: note_text,
+            note_type: ProgressNoteType::TaskCompleted,
             noted_at: Utc::now(),
         });
     }
@@ -77,24 +86,33 @@ pub fn handle_fail_task(cmd: FailTask) -> Result<Vec<RewindEvent>, RewindError> 
             "Failure reason cannot be empty",
         ));
     }
+    let note_text = format!("Task {} failed: {}", cmd.task_id, cmd.reason);
     let mut events = vec![RewindEvent::TaskFailed {
         task_id: cmd.task_id.clone(),
-        reason: cmd.reason.clone(),
+        reason: cmd.reason,
         failed_at: Utc::now(),
     }];
-    events.push(RewindEvent::ProgressNoted {
-        session_id: cmd.session_id.clone(),
-        task_id: Some(cmd.task_id.clone()),
-        note: format!("Task {} failed: {}", cmd.task_id, cmd.reason),
-        note_type: ProgressNoteType::TaskFailed,
-        noted_at: Utc::now(),
-    });
     if let Some(note) = cmd.discretionary_note {
+        events.push(RewindEvent::ProgressNoted {
+            session_id: cmd.session_id.clone(),
+            task_id: Some(cmd.task_id.clone()),
+            note: note_text,
+            note_type: ProgressNoteType::TaskFailed,
+            noted_at: Utc::now(),
+        });
         events.push(RewindEvent::ProgressNoted {
             session_id: cmd.session_id,
             task_id: Some(cmd.task_id),
             note,
             note_type: ProgressNoteType::Discretionary,
+            noted_at: Utc::now(),
+        });
+    } else {
+        events.push(RewindEvent::ProgressNoted {
+            session_id: cmd.session_id,
+            task_id: Some(cmd.task_id),
+            note: note_text,
+            note_type: ProgressNoteType::TaskFailed,
             noted_at: Utc::now(),
         });
     }
