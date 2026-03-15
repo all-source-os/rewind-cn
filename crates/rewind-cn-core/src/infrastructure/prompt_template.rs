@@ -80,7 +80,10 @@ mod tests {
     #[test]
     fn render_default_template_empty_context() {
         // No variables at all — task_title should show default value
-        let result = render_prompt(&PathBuf::from("/nonexistent/template.tera"), &HashMap::new());
+        let result = render_prompt(
+            &PathBuf::from("/nonexistent/template.tera"),
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
         let rendered = result.unwrap();
         assert!(rendered.contains("No task specified."));

@@ -48,6 +48,7 @@ pub enum TaskOutcome {
     InProgress,
     Passed,
     Failed,
+    Blocked,
 }
 
 /// Per-epic aggregate metrics.
@@ -179,6 +180,23 @@ impl AnalyticsProjection {
                     if let Some(epic) = self.epics.get_mut(eid) {
                         epic.failed += 1;
                     }
+                }
+            }
+
+            RewindEvent::TaskRetried { task_id, .. } => {
+                if let Some(t) = self.tasks.get_mut(task_id.as_ref()) {
+                    t.outcome = TaskOutcome::InProgress;
+                }
+                if let Some(eid) = self.task_to_epic.get(task_id.as_ref()) {
+                    if let Some(epic) = self.epics.get_mut(eid) {
+                        epic.failed = epic.failed.saturating_sub(1);
+                    }
+                }
+            }
+
+            RewindEvent::TaskBlocked { task_id, .. } => {
+                if let Some(t) = self.tasks.get_mut(task_id.as_ref()) {
+                    t.outcome = TaskOutcome::Blocked;
                 }
             }
 
@@ -363,7 +381,6 @@ impl AnalyticsProjection {
                     let type_str = match &n.note_type {
                         ProgressNoteType::TaskCompleted => "TaskCompleted",
                         ProgressNoteType::TaskFailed => "TaskFailed",
-                        ProgressNoteType::RetryLearning => "RetryLearning",
                         ProgressNoteType::Discretionary => "Discretionary",
                     };
                     if type_str != nt {
@@ -573,5 +590,40 @@ mod tests {
 
         assert_eq!(proj.task_summary(None).len(), 2);
         assert_eq!(proj.task_summary(Some("e-1")).len(), 1);
+    }
+
+    #[test]
+    fn task_blocked_projects_correctly() {
+        let mut proj = AnalyticsProjection::default();
+        let now = Utc::now();
+        let task_id = TaskId::new("t-blocked");
+        let blocker_id = TaskId::new("t-blocker");
+
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: task_id.clone(),
+            title: "Blocked task".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![blocker_id.clone()],
+        });
+
+        proj.apply_event(&RewindEvent::TaskStarted {
+            task_id: task_id.clone(),
+            started_at: now,
+        });
+
+        assert_eq!(proj.tasks["t-blocked"].outcome, TaskOutcome::InProgress);
+
+        proj.apply_event(&RewindEvent::TaskBlocked {
+            task_id: task_id.clone(),
+            blocked_by: blocker_id,
+            blocked_at: now + Duration::seconds(5),
+        });
+
+        let task = &proj.tasks["t-blocked"];
+        assert_eq!(task.outcome, TaskOutcome::Blocked);
     }
 }

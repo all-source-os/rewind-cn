@@ -1,10 +1,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::domain::error::RewindError;
 use crate::domain::events::AcceptanceCriterion;
 use crate::infrastructure::coder::ToolCallRecord;
 use crate::infrastructure::llm::{AgentConfig, ProviderClient};
+
+const MAX_PARSE_RETRIES: usize = 2;
 
 /// Result of evaluating a single acceptance criterion.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -58,6 +61,27 @@ Return ONLY a JSON object with this exact structure (no markdown, no code fences
 5. The "passed" top-level field should be true ONLY if ALL criteria passed.
 "#;
 
+/// Strip markdown code fences from LLM response and parse as JSON.
+fn strip_fences_and_parse(response: &str) -> Result<EvaluationResult, serde_json::Error> {
+    let trimmed = response.trim();
+    let json_str = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|s: &str| s.strip_suffix("```"))
+        .unwrap_or(trimmed);
+    serde_json::from_str::<EvaluationResult>(json_str)
+}
+
+/// Build a corrective prompt that includes the original input and the parse error.
+fn corrective_prompt(original_input: &str, error: &serde_json::Error) -> String {
+    format!(
+        "{original_input}\n\n\
+        Your previous response was not valid JSON. \
+        The parse error was: {error}\n\
+        Please respond with valid JSON only."
+    )
+}
+
 /// LLM-powered evaluator agent that judges task completion.
 pub struct EvaluatorAgent {
     client: ProviderClient,
@@ -85,29 +109,43 @@ impl EvaluatorAgent {
             agent_output,
         );
 
-        let response: String = self
-            .client
-            .prompt(
-                &self.config.evaluator.model,
-                EVALUATOR_SYSTEM_PROMPT,
-                self.config.evaluator.max_tokens as u64,
-                &eval_input,
-            )
-            .await?;
+        let mut user_prompt = eval_input.clone();
+        let mut last_error: Option<serde_json::Error> = None;
+        let mut last_response = String::new();
 
-        // Strip markdown code fences if present
-        let trimmed = response.trim();
-        let json_str = trimmed
-            .strip_prefix("```json")
-            .or_else(|| trimmed.strip_prefix("```"))
-            .and_then(|s: &str| s.strip_suffix("```"))
-            .unwrap_or(trimmed);
+        for attempt in 0..=MAX_PARSE_RETRIES {
+            let response: String = self
+                .client
+                .prompt(
+                    &self.config.evaluator.model,
+                    EVALUATOR_SYSTEM_PROMPT,
+                    self.config.evaluator.max_tokens as u64,
+                    &user_prompt,
+                )
+                .await?;
 
-        serde_json::from_str::<EvaluationResult>(json_str).map_err(|e| {
-            RewindError::Config(format!(
-                "Failed to parse evaluator output: {e}\n\nRaw output:\n{response}"
-            ))
-        })
+            match strip_fences_and_parse(&response) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    last_response = response;
+                    if attempt < MAX_PARSE_RETRIES {
+                        warn!(
+                            attempt = attempt + 1,
+                            max_retries = MAX_PARSE_RETRIES,
+                            error = %e,
+                            "Evaluator returned invalid JSON, retrying with corrective prompt"
+                        );
+                        user_prompt = corrective_prompt(&eval_input, &e);
+                    }
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(RewindError::Config(format!(
+            "Failed to parse evaluator output as EvaluationResult after {MAX_PARSE_RETRIES} retries: {}\n\nRaw output:\n{last_response}",
+            last_error.unwrap(),
+        )))
     }
 }
 
@@ -143,6 +181,8 @@ fn build_eval_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const VALID_EVAL_JSON: &str = r#"{"passed":true,"criteria_results":[{"index":0,"passed":true,"reason":"Done"}],"summary":"All good"}"#;
 
     #[test]
     fn evaluation_result_deserializes() {
@@ -219,5 +259,100 @@ mod tests {
     fn build_eval_input_handles_empty_tool_calls() {
         let input = build_eval_input("Task", &[], &[], "output");
         assert!(input.contains("no tool calls recorded"));
+    }
+
+    #[test]
+    fn strip_fences_and_parse_valid_json() {
+        let result = strip_fences_and_parse(VALID_EVAL_JSON).unwrap();
+        assert!(result.passed);
+    }
+
+    #[test]
+    fn strip_fences_and_parse_with_fences() {
+        let fenced = format!("```json\n{}\n```", VALID_EVAL_JSON);
+        let result = strip_fences_and_parse(&fenced).unwrap();
+        assert!(result.passed);
+    }
+
+    #[test]
+    fn strip_fences_and_parse_invalid_json() {
+        assert!(strip_fences_and_parse("not json at all").is_err());
+    }
+
+    #[test]
+    fn corrective_prompt_contains_error_info() {
+        let err = strip_fences_and_parse("bad").unwrap_err();
+        let prompt = corrective_prompt("original input", &err);
+        assert!(prompt.starts_with("original input"));
+        assert!(prompt.contains("not valid JSON"));
+    }
+
+    #[tokio::test]
+    async fn evaluator_retry_succeeds_on_second_attempt() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+        let valid = VALID_EVAL_JSON.to_string();
+
+        let client = ProviderClient::Mock(Arc::new(move |_, _, _, _| {
+            let n = cc.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                "not json".into()
+            } else {
+                valid.clone()
+            }
+        }));
+
+        let config = AgentConfig::default();
+        let agent = EvaluatorAgent::new(client, config);
+
+        let result = agent.evaluate("desc", &[], &[], "output").await;
+        assert!(result.is_ok());
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn evaluator_fails_after_max_retries() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+
+        let client = ProviderClient::Mock(Arc::new(move |_, _, _, _| {
+            cc.fetch_add(1, Ordering::SeqCst);
+            "never valid".into()
+        }));
+
+        let config = AgentConfig::default();
+        let agent = EvaluatorAgent::new(client, config);
+
+        let result = agent.evaluate("desc", &[], &[], "output").await;
+        assert!(result.is_err());
+        assert_eq!(call_count.load(Ordering::SeqCst), 3); // 1 initial + 2 retries
+    }
+
+    #[tokio::test]
+    async fn evaluator_no_retry_on_first_success() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+        let valid = VALID_EVAL_JSON.to_string();
+
+        let client = ProviderClient::Mock(Arc::new(move |_, _, _, _| {
+            cc.fetch_add(1, Ordering::SeqCst);
+            valid.clone()
+        }));
+
+        let config = AgentConfig::default();
+        let agent = EvaluatorAgent::new(client, config);
+
+        let result = agent.evaluate("desc", &[], &[], "output").await;
+        assert!(result.is_ok());
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
 }

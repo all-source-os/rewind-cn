@@ -32,6 +32,11 @@ pub struct FailTask {
     pub discretionary_note: Option<String>,
 }
 
+pub struct RetryTask {
+    pub task_id: TaskId,
+    pub retry_number: u32,
+}
+
 pub struct CreateEpic {
     pub title: String,
     pub description: String,

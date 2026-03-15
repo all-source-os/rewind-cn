@@ -86,6 +86,11 @@ impl TaskAggregate {
                 self.failure_reason = Some(reason.clone());
                 self.status = TaskStatus::Failed;
             }
+            RewindEvent::TaskRetried { .. } => {
+                self.status = TaskStatus::Pending;
+                self.failure_reason = None;
+                self.agent_id = None;
+            }
             RewindEvent::TaskBlocked { blocked_by, .. } => {
                 self.blocked_by = Some(blocked_by.clone());
                 self.status = TaskStatus::Blocked;
@@ -260,6 +265,13 @@ impl BacklogProjection {
                     task.status = TaskStatus::Failed;
                 }
             }
+            RewindEvent::TaskRetried { task_id, .. } => {
+                if let Some(task) = self.tasks.get_mut(task_id.as_ref()) {
+                    task.status = TaskStatus::Pending;
+                    task.agent_id = None;
+                }
+                self.completed_tasks.remove(task_id.as_ref());
+            }
             RewindEvent::TaskBlocked { task_id, .. } => {
                 if let Some(task) = self.tasks.get_mut(task_id.as_ref()) {
                     task.status = TaskStatus::Blocked;
@@ -285,6 +297,8 @@ impl BacklogProjection {
 #[derive(Debug, Default)]
 pub struct EpicProgressProjection {
     pub epics: HashMap<String, EpicProgress>,
+    /// Map task_id → epic_id for cross-referencing on TaskCompleted/TaskFailed.
+    task_to_epic: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -293,6 +307,7 @@ pub struct EpicProgress {
     pub title: String,
     pub total_tasks: usize,
     pub completed_tasks: usize,
+    pub failed_tasks: usize,
     pub is_completed: bool,
     pub quality_gates: Vec<QualityGate>,
 }
@@ -332,16 +347,37 @@ impl EpicProgressProjection {
                 }
             }
             RewindEvent::TaskCreated {
-                epic_id: Some(eid), ..
+                task_id,
+                epic_id: Some(eid),
+                ..
             } => {
+                self.task_to_epic
+                    .insert(task_id.to_string(), eid.to_string());
                 if let Some(epic) = self.epics.get_mut(eid.as_ref()) {
                     epic.total_tasks += 1;
                 }
             }
-            RewindEvent::TaskCreated { epic_id: None, .. } => {}
+            RewindEvent::TaskCreated { .. } => {}
             RewindEvent::TaskCompleted { task_id, .. } => {
-                // Known simplification: we'd need cross-reference to find the epic.
-                let _ = task_id;
+                if let Some(eid) = self.task_to_epic.get(task_id.as_ref()) {
+                    if let Some(epic) = self.epics.get_mut(eid) {
+                        epic.completed_tasks += 1;
+                    }
+                }
+            }
+            RewindEvent::TaskFailed { task_id, .. } => {
+                if let Some(eid) = self.task_to_epic.get(task_id.as_ref()) {
+                    if let Some(epic) = self.epics.get_mut(eid) {
+                        epic.failed_tasks += 1;
+                    }
+                }
+            }
+            RewindEvent::TaskRetried { task_id, .. } => {
+                if let Some(eid) = self.task_to_epic.get(task_id.as_ref()) {
+                    if let Some(epic) = self.epics.get_mut(eid) {
+                        epic.failed_tasks = epic.failed_tasks.saturating_sub(1);
+                    }
+                }
             }
             _ => {}
         }
@@ -491,6 +527,144 @@ mod tests {
     }
 
     #[test]
+    fn epic_progress_tracks_completion_via_cross_reference() {
+        let mut proj = EpicProgressProjection::default();
+        let now = Utc::now();
+
+        // Create epic with two tasks
+        proj.apply_event(&RewindEvent::EpicCreated {
+            epic_id: EpicId::new("e-1"),
+            title: "Sprint 1".into(),
+            description: "".into(),
+            created_at: now,
+            quality_gates: vec![],
+        });
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-1"),
+            title: "Task 1".into(),
+            description: "".into(),
+            epic_id: Some(EpicId::new("e-1")),
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        });
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-2"),
+            title: "Task 2".into(),
+            description: "".into(),
+            epic_id: Some(EpicId::new("e-1")),
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        });
+
+        assert_eq!(proj.epics["e-1"].total_tasks, 2);
+        assert_eq!(proj.epics["e-1"].completed_tasks, 0);
+        assert_eq!(proj.progress_pct("e-1"), Some(0.0));
+
+        // Complete first task
+        proj.apply_event(&RewindEvent::TaskCompleted {
+            task_id: TaskId::new("t-1"),
+            completed_at: now,
+        });
+        assert_eq!(proj.epics["e-1"].completed_tasks, 1);
+        assert_eq!(proj.progress_pct("e-1"), Some(50.0));
+
+        // Complete second task
+        proj.apply_event(&RewindEvent::TaskCompleted {
+            task_id: TaskId::new("t-2"),
+            completed_at: now,
+        });
+        assert_eq!(proj.epics["e-1"].completed_tasks, 2);
+        assert_eq!(proj.progress_pct("e-1"), Some(100.0));
+    }
+
+    #[test]
+    fn epic_progress_tracks_failures_and_retries() {
+        let mut proj = EpicProgressProjection::default();
+        let now = Utc::now();
+
+        proj.apply_event(&RewindEvent::EpicCreated {
+            epic_id: EpicId::new("e-1"),
+            title: "Sprint 1".into(),
+            description: "".into(),
+            created_at: now,
+            quality_gates: vec![],
+        });
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-1"),
+            title: "Flaky task".into(),
+            description: "".into(),
+            epic_id: Some(EpicId::new("e-1")),
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        });
+
+        // Fail the task
+        proj.apply_event(&RewindEvent::TaskFailed {
+            task_id: TaskId::new("t-1"),
+            reason: "timeout".into(),
+            failed_at: now,
+        });
+        assert_eq!(proj.epics["e-1"].failed_tasks, 1);
+        assert_eq!(proj.epics["e-1"].completed_tasks, 0);
+
+        // Retry resets failure count
+        proj.apply_event(&RewindEvent::TaskRetried {
+            task_id: TaskId::new("t-1"),
+            retry_number: 1,
+            retried_at: now,
+        });
+        assert_eq!(proj.epics["e-1"].failed_tasks, 0);
+
+        // Succeed on retry
+        proj.apply_event(&RewindEvent::TaskCompleted {
+            task_id: TaskId::new("t-1"),
+            completed_at: now,
+        });
+        assert_eq!(proj.epics["e-1"].completed_tasks, 1);
+        assert_eq!(proj.progress_pct("e-1"), Some(100.0));
+    }
+
+    #[test]
+    fn epic_progress_ignores_tasks_without_epic() {
+        let mut proj = EpicProgressProjection::default();
+        let now = Utc::now();
+
+        proj.apply_event(&RewindEvent::EpicCreated {
+            epic_id: EpicId::new("e-1"),
+            title: "Sprint 1".into(),
+            description: "".into(),
+            created_at: now,
+            quality_gates: vec![],
+        });
+
+        // Task without epic_id
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-orphan"),
+            title: "Orphan".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        });
+        proj.apply_event(&RewindEvent::TaskCompleted {
+            task_id: TaskId::new("t-orphan"),
+            completed_at: now,
+        });
+
+        // Epic should be unaffected
+        assert_eq!(proj.epics["e-1"].total_tasks, 0);
+        assert_eq!(proj.epics["e-1"].completed_tasks, 0);
+    }
+
+    #[test]
     fn is_blocked_checks_dependencies() {
         let mut proj = BacklogProjection::default();
         let now = Utc::now();
@@ -574,5 +748,96 @@ mod tests {
         });
 
         assert_eq!(proj.criteria_checked_count("t-1"), (2, 3));
+    }
+
+    #[test]
+    fn task_retried_resets_to_pending_and_clears_completed() {
+        let mut proj = BacklogProjection::default();
+        let now = Utc::now();
+
+        // Create two tasks: t-2 depends on t-1
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-1"),
+            title: "Task 1".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        });
+        proj.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-2"),
+            title: "Task 2".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: now,
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![TaskId::new("t-1")],
+        });
+
+        // Complete t-1 → t-2 unblocked
+        proj.apply_event(&RewindEvent::TaskCompleted {
+            task_id: TaskId::new("t-1"),
+            completed_at: now,
+        });
+        assert!(!proj.is_blocked("t-2"));
+        assert_eq!(proj.tasks["t-1"].status, TaskStatus::Completed);
+
+        // t-1 fails on re-check, retried → back to Pending
+        proj.apply_event(&RewindEvent::TaskFailed {
+            task_id: TaskId::new("t-1"),
+            reason: "flaky".into(),
+            failed_at: now,
+        });
+        proj.apply_event(&RewindEvent::TaskRetried {
+            task_id: TaskId::new("t-1"),
+            retry_number: 1,
+            retried_at: now,
+        });
+
+        // t-1 should be Pending again, not in completed_tasks
+        assert_eq!(proj.tasks["t-1"].status, TaskStatus::Pending);
+        assert!(proj.tasks["t-1"].agent_id.is_none());
+        // t-2 should now be blocked again since t-1 is no longer completed
+        assert!(proj.is_blocked("t-2"));
+    }
+
+    #[test]
+    fn task_aggregate_retry_resets_state() {
+        let mut task = TaskAggregate::default();
+
+        task.apply_event(&RewindEvent::TaskCreated {
+            task_id: TaskId::new("t-1"),
+            title: "Flaky task".into(),
+            description: "".into(),
+            epic_id: None,
+            created_at: Utc::now(),
+            acceptance_criteria: vec![],
+            story_type: None,
+            depends_on: vec![],
+        });
+        task.apply_event(&RewindEvent::TaskAssigned {
+            task_id: TaskId::new("t-1"),
+            agent_id: AgentId::new("agent-1"),
+            assigned_at: Utc::now(),
+        });
+        task.apply_event(&RewindEvent::TaskFailed {
+            task_id: TaskId::new("t-1"),
+            reason: "timeout".into(),
+            failed_at: Utc::now(),
+        });
+        assert_eq!(task.status, TaskStatus::Failed);
+        assert!(task.failure_reason.is_some());
+
+        task.apply_event(&RewindEvent::TaskRetried {
+            task_id: TaskId::new("t-1"),
+            retry_number: 1,
+            retried_at: Utc::now(),
+        });
+        assert_eq!(task.status, TaskStatus::Pending);
+        assert!(task.failure_reason.is_none());
+        assert!(task.agent_id.is_none());
     }
 }

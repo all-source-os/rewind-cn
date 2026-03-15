@@ -1,8 +1,12 @@
 use async_trait::async_trait;
+use tracing::warn;
 
 use crate::application::planning::{Plan, PlanGenerator};
 use crate::domain::error::RewindError;
 use crate::infrastructure::llm::{AgentConfig, ProviderClient};
+use crate::infrastructure::sanitize::sanitize_user_content;
+
+const MAX_PARSE_RETRIES: usize = 2;
 
 const PLANNER_SYSTEM_PROMPT: &str = r#"You are a software project planner. Given a feature description or PRD, decompose it into an epic with child stories.
 
@@ -63,33 +67,69 @@ impl PlannerAgent {
     }
 }
 
+/// Strip markdown code fences from LLM response and parse as JSON.
+fn strip_fences_and_parse(response: &str) -> Result<Plan, serde_json::Error> {
+    let trimmed = response.trim();
+    let json_str = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|s: &str| s.strip_suffix("```"))
+        .unwrap_or(trimmed);
+    serde_json::from_str::<Plan>(json_str)
+}
+
+/// Build a corrective prompt that includes the original input and the parse error.
+fn corrective_prompt(original_input: &str, error: &serde_json::Error) -> String {
+    format!(
+        "{original_input}\n\n\
+        Your previous response was not valid JSON. \
+        The parse error was: {error}\n\
+        Please respond with valid JSON only."
+    )
+}
+
 #[async_trait]
 impl PlanGenerator for PlannerAgent {
     #[hotpath::measure]
     async fn decompose(&self, input: &str) -> Result<Plan, RewindError> {
-        let response: String = self
-            .client
-            .prompt(
-                &self.config.planner.model,
-                PLANNER_SYSTEM_PROMPT,
-                self.config.planner.max_tokens as u64,
-                input,
-            )
-            .await?;
+        let sanitized_input = sanitize_user_content(input);
+        let mut user_prompt = sanitized_input.clone();
+        let mut last_error: Option<serde_json::Error> = None;
+        let mut last_response = String::new();
 
-        // Strip markdown code fences if present
-        let trimmed = response.trim();
-        let json_str = trimmed
-            .strip_prefix("```json")
-            .or_else(|| trimmed.strip_prefix("```"))
-            .and_then(|s: &str| s.strip_suffix("```"))
-            .unwrap_or(trimmed);
+        for attempt in 0..=MAX_PARSE_RETRIES {
+            let response = self
+                .client
+                .prompt(
+                    &self.config.planner.model,
+                    PLANNER_SYSTEM_PROMPT,
+                    self.config.planner.max_tokens as u64,
+                    &user_prompt,
+                )
+                .await?;
 
-        serde_json::from_str::<Plan>(json_str).map_err(|e| {
-            RewindError::Config(format!(
-                "Failed to parse planner output as Plan: {e}\n\nRaw output:\n{response}"
-            ))
-        })
+            match strip_fences_and_parse(&response) {
+                Ok(plan) => return Ok(plan),
+                Err(e) => {
+                    last_response = response;
+                    if attempt < MAX_PARSE_RETRIES {
+                        warn!(
+                            attempt = attempt + 1,
+                            max_retries = MAX_PARSE_RETRIES,
+                            error = %e,
+                            "Planner returned invalid JSON, retrying with corrective prompt"
+                        );
+                        user_prompt = corrective_prompt(&sanitized_input, &e);
+                    }
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(RewindError::Config(format!(
+            "Failed to parse planner output as Plan after {MAX_PARSE_RETRIES} retries: {}\n\nRaw output:\n{last_response}",
+            last_error.unwrap(),
+        )))
     }
 }
 
@@ -199,5 +239,106 @@ mod tests {
         assert!(PLANNER_SYSTEM_PROMPT.contains("depends_on"));
         assert!(PLANNER_SYSTEM_PROMPT.contains("story_type"));
         assert!(PLANNER_SYSTEM_PROMPT.contains("Right-sized stories"));
+    }
+
+    const VALID_PLAN_JSON: &str = r#"{
+        "epic_title": "Test Feature",
+        "epic_description": "A test",
+        "quality_gates": [],
+        "stories": [{
+            "title": "US-001: Do it [Backend]",
+            "description": "Do it",
+            "story_type": "Backend",
+            "acceptance_criteria": ["Done"],
+            "depends_on": []
+        }]
+    }"#;
+
+    #[test]
+    fn strip_fences_and_parse_valid_json() {
+        let plan = strip_fences_and_parse(VALID_PLAN_JSON).unwrap();
+        assert_eq!(plan.epic_title, "Test Feature");
+    }
+
+    #[test]
+    fn strip_fences_and_parse_invalid_json() {
+        assert!(strip_fences_and_parse("not json at all").is_err());
+    }
+
+    #[test]
+    fn corrective_prompt_contains_error_info() {
+        let err = strip_fences_and_parse("bad").unwrap_err();
+        let prompt = corrective_prompt("original input", &err);
+        assert!(prompt.starts_with("original input"));
+        assert!(prompt.contains("not valid JSON"));
+    }
+
+    #[tokio::test]
+    async fn planner_retry_succeeds_on_second_attempt() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+        let valid = VALID_PLAN_JSON.to_string();
+
+        let client = ProviderClient::Mock(Arc::new(move |_, _, _, _| {
+            let n = cc.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                "not json".into()
+            } else {
+                valid.clone()
+            }
+        }));
+
+        let config = AgentConfig::default();
+        let agent = PlannerAgent::new(client, config);
+
+        let result = agent.decompose("test input").await;
+        assert!(result.is_ok());
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn planner_fails_after_max_retries() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+
+        let client = ProviderClient::Mock(Arc::new(move |_, _, _, _| {
+            cc.fetch_add(1, Ordering::SeqCst);
+            "never valid".into()
+        }));
+
+        let config = AgentConfig::default();
+        let agent = PlannerAgent::new(client, config);
+
+        let result = agent.decompose("test input").await;
+        assert!(result.is_err());
+        assert_eq!(call_count.load(Ordering::SeqCst), 3); // 1 initial + 2 retries
+    }
+
+    #[tokio::test]
+    async fn planner_no_retry_on_first_success() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+        let valid = VALID_PLAN_JSON.to_string();
+
+        let client = ProviderClient::Mock(Arc::new(move |_, _, _, _| {
+            cc.fetch_add(1, Ordering::SeqCst);
+            valid.clone()
+        }));
+
+        let config = AgentConfig::default();
+        let agent = PlannerAgent::new(client, config);
+
+        let result = agent.decompose("test input").await;
+        assert!(result.is_ok());
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
 }

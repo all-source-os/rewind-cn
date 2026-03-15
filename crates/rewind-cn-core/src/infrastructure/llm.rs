@@ -34,6 +34,10 @@ impl Provider {
 pub enum ProviderClient {
     Anthropic(anthropic::Client),
     OpenAI(openai::Client),
+    /// Mock provider for testing. The closure receives (model, preamble, max_tokens, input)
+    /// and returns the response string. Wrapped in Arc for Clone.
+    #[cfg(test)]
+    Mock(std::sync::Arc<dyn Fn(&str, &str, u64, &str) -> String + Send + Sync>),
 }
 
 impl ProviderClient {
@@ -68,6 +72,8 @@ impl ProviderClient {
                     .await
                     .map_err(|e| RewindError::Config(format!("LLM call failed: {e}")))
             }
+            #[cfg(test)]
+            Self::Mock(f) => Ok(f(model, preamble, max_tokens, input)),
         }
     }
 }

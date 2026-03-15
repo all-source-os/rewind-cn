@@ -8,7 +8,11 @@ mod config;
 mod tui;
 
 #[derive(Parser)]
-#[command(name = "rewind", about = "Autonomous coding agent orchestrator", version)]
+#[command(
+    name = "rewind",
+    about = "Autonomous coding agent orchestrator",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

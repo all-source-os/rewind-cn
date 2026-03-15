@@ -34,7 +34,6 @@ pub fn project_progress_notes(events: &[RewindEvent], limit: usize) -> String {
         let tag = match note_type {
             ProgressNoteType::TaskCompleted => "completed",
             ProgressNoteType::TaskFailed => "failed",
-            ProgressNoteType::RetryLearning => "learning",
             ProgressNoteType::Discretionary => "note",
         };
         let task_ref = match task_id {
@@ -92,14 +91,14 @@ mod tests {
             make_progress_event(
                 Some("task-2"),
                 "Timeout needs increasing",
-                ProgressNoteType::RetryLearning,
+                ProgressNoteType::Discretionary,
             ),
             make_progress_event(None, "General observation", ProgressNoteType::Discretionary),
         ];
 
         let result = project_progress_notes(&events, 20);
         assert!(result.contains("- **[completed]** (task: task-1) Task task-1 completed"));
-        assert!(result.contains("- **[learning]** (task: task-2) Timeout needs increasing"));
+        assert!(result.contains("- **[note]** (task: task-2) Timeout needs increasing"));
         assert!(result.contains("- **[note]** General observation"));
         // No task ref for None task_id
         assert!(!result.contains("(task:) General"));

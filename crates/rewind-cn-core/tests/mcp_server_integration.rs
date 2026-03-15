@@ -20,16 +20,15 @@ fn make_request(method: &str, params: Value) -> JsonRpcRequest {
 async fn tools_list_returns_all_tool_names() {
     let engine = Arc::new(RewindEngine::in_memory().await);
     let server = RewindMcpServer::new(engine, "/dev/null".into());
-    let resp = server.handle_request(make_request("tools/list", json!({}))).await;
+    let resp = server
+        .handle_request(make_request("tools/list", json!({})))
+        .await;
 
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
     let tools = result["tools"].as_array().unwrap();
 
-    let tool_names: Vec<&str> = tools
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
 
     assert!(tool_names.contains(&"rewind_status"));
     assert!(tool_names.contains(&"rewind_task_list"));

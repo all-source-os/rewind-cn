@@ -543,11 +543,7 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindMcpServer<B> {
         let session_id = match args.get("session_id").and_then(|v| v.as_str()) {
             Some(s) => s,
             None => {
-                return JsonRpcResponse::error(
-                    id,
-                    -32602,
-                    "Missing required parameter: session_id",
-                )
+                return JsonRpcResponse::error(id, -32602, "Missing required parameter: session_id")
             }
         };
 

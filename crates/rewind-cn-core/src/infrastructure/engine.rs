@@ -104,6 +104,9 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
             .register::<FailTaskCmd, _>(FailTaskBridge)
             .await;
         self.command_bus
+            .register::<RetryTaskCmd, _>(RetryTaskBridge)
+            .await;
+        self.command_bus
             .register::<CreateEpicCmd, _>(CreateEpicBridge)
             .await;
         self.command_bus
@@ -185,6 +188,14 @@ impl<B: allframe::cqrs::EventStoreBackend<RewindEvent>> RewindEngine<B> {
     ) -> Result<Vec<RewindEvent>, RewindError> {
         let agg_id = cmd.task_id.to_string();
         self.dispatch_and_append(&agg_id, FailTaskCmd(cmd)).await
+    }
+
+    pub async fn retry_task(
+        &self,
+        cmd: commands::RetryTask,
+    ) -> Result<Vec<RewindEvent>, RewindError> {
+        let agg_id = cmd.task_id.to_string();
+        self.dispatch_and_append(&agg_id, RetryTaskCmd(cmd)).await
     }
 
     pub async fn create_epic(

@@ -34,6 +34,9 @@ impl Command for CompleteTaskCmd {}
 pub struct FailTaskCmd(pub commands::FailTask);
 impl Command for FailTaskCmd {}
 
+pub struct RetryTaskCmd(pub commands::RetryTask);
+impl Command for RetryTaskCmd {}
+
 pub struct CreateEpicCmd(pub commands::CreateEpic);
 impl Command for CreateEpicCmd {}
 
@@ -90,6 +93,15 @@ pub struct FailTaskBridge;
 impl CommandHandler<FailTaskCmd, RewindEvent> for FailTaskBridge {
     async fn handle(&self, cmd: FailTaskCmd) -> CommandResult<RewindEvent> {
         handlers::handle_fail_task(cmd.0).map_err(rewind_error_to_command_error)
+    }
+}
+
+pub struct RetryTaskBridge;
+
+#[async_trait]
+impl CommandHandler<RetryTaskCmd, RewindEvent> for RetryTaskBridge {
+    async fn handle(&self, cmd: RetryTaskCmd) -> CommandResult<RewindEvent> {
+        handlers::handle_retry_task(cmd.0).map_err(rewind_error_to_command_error)
     }
 }
 

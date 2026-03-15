@@ -119,6 +119,14 @@ pub fn handle_fail_task(cmd: FailTask) -> Result<Vec<RewindEvent>, RewindError> 
     Ok(events)
 }
 
+pub fn handle_retry_task(cmd: RetryTask) -> Result<Vec<RewindEvent>, RewindError> {
+    Ok(vec![RewindEvent::TaskRetried {
+        task_id: cmd.task_id,
+        retry_number: cmd.retry_number,
+        retried_at: Utc::now(),
+    }])
+}
+
 pub fn handle_create_epic(cmd: CreateEpic) -> Result<Vec<RewindEvent>, RewindError> {
     if cmd.title.trim().is_empty() {
         return Err(RewindError::validation(
@@ -230,7 +238,7 @@ mod tests {
         let events = handle_start_session(StartSession).unwrap();
 
         assert_eq!(events.len(), 1);
-        matches!(&events[0], RewindEvent::SessionStarted { .. });
+        assert!(matches!(&events[0], RewindEvent::SessionStarted { .. }));
     }
 
     #[test]

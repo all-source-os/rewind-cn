@@ -285,7 +285,10 @@ mod tests {
         );
         assert_eq!(config.max_iterations, 25);
         assert_eq!(config.subagent_tracing_detail, TracingDetail::Verbose);
-        assert_eq!(config.gates.epic.commands, vec!["cargo test", "cargo clippy"]);
+        assert_eq!(
+            config.gates.epic.commands,
+            vec!["cargo test", "cargo clippy"]
+        );
         assert_eq!(config.gates.story.commands, vec!["cargo check"]);
     }
 

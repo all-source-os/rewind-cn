@@ -173,9 +173,7 @@ mod tests {
         assert!(!client.is_active());
 
         // Should not panic or do anything
-        client
-            .capture("test.event", HashMap::new())
-            .await;
+        client.capture("test.event", HashMap::new()).await;
         client.flush().await;
     }
 

@@ -210,11 +210,7 @@ impl QualityGateRunner {
 
 /// Filter gates by tier level (useful for callers that need the list without running).
 pub fn filter_gates_by_level(gates: &[QualityGate], level: &QualityGateLevel) -> Vec<QualityGate> {
-    gates
-        .iter()
-        .filter(|g| &g.tier == level)
-        .cloned()
-        .collect()
+    gates.iter().filter(|g| &g.tier == level).cloned().collect()
 }
 
 #[cfg(test)]

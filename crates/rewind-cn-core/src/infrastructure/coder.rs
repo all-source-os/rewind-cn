@@ -12,6 +12,7 @@ use crate::domain::error::RewindError;
 use crate::domain::events::AcceptanceCriterion;
 use crate::infrastructure::llm::{AgentConfig, ProviderClient};
 use crate::infrastructure::prompt_template::render_prompt;
+use crate::infrastructure::sanitize::sanitize_user_content;
 
 /// A recorded tool call for audit trail.
 #[derive(Debug, Clone)]
@@ -76,7 +77,7 @@ impl Tool for ReadFileTool {
 
     #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let full_path = self.work_dir.join(&args.path);
+        let full_path = validate_path(&self.work_dir, &args.path)?;
         let content = tokio::fs::read_to_string(&full_path)
             .await
             .map_err(|e| ToolError(format!("Failed to read {}: {e}", args.path)))?;
@@ -141,7 +142,7 @@ impl Tool for WriteFileTool {
 
     #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let full_path = self.work_dir.join(&args.path);
+        let full_path = validate_path_for_write(&self.work_dir, &args.path)?;
         if let Some(parent) = full_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -214,9 +215,11 @@ impl Tool for ListFilesTool {
     #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let dir = if args.path.is_empty() {
-            self.work_dir.clone()
+            self.work_dir
+                .canonicalize()
+                .map_err(|e| ToolError(format!("Failed to canonicalize work_dir: {e}")))?
         } else {
-            self.work_dir.join(&args.path)
+            validate_path(&self.work_dir, &args.path)?
         };
 
         let mut entries = Vec::new();
@@ -320,30 +323,47 @@ impl Tool for SearchCodeTool {
     #[hotpath::measure]
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let search_path = match &args.path {
-            Some(p) => self.work_dir.join(p),
-            None => self.work_dir.clone(),
+            Some(p) => validate_path(&self.work_dir, p)?,
+            None => self
+                .work_dir
+                .canonicalize()
+                .map_err(|e| ToolError(format!("Failed to canonicalize work_dir: {e}")))?,
         };
 
         // Use grep with -F (fixed string) to prevent regex injection,
         // and -- to prevent pattern being interpreted as flags.
-        let mut cmd = tokio::process::Command::new("grep");
-        cmd.args(["-rnF", "--", &args.pattern])
-            .arg(&search_path)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+        // We use find + grep to avoid following symlinks: find's default
+        // behavior (-P / no -L) does not follow symlinks, ensuring we only
+        // search real files within the work directory.
+        let mut cmd = tokio::process::Command::new("find");
+        let mut find_args: Vec<std::ffi::OsString> =
+            vec![search_path.as_os_str().to_owned(), "-type".into(), "f".into()];
 
         if let Some(ref ext) = args.file_ext {
-            // Validate file extension contains only safe characters
             if !ext.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 return Err(ToolError(format!("Invalid file extension: {ext}")));
             }
-            cmd.args(["--include", &format!("*.{ext}")]);
+            find_args.extend(["-name".into(), format!("*.{ext}").into()]);
         }
+
+        find_args.extend([
+            "-exec".into(),
+            "grep".into(),
+            "-nF".into(),
+            "--".into(),
+            args.pattern.clone().into(),
+            "{}".into(),
+            "+".into(),
+        ]);
+
+        cmd.args(&find_args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
 
         let output = cmd
             .output()
             .await
-            .map_err(|e| ToolError(format!("Failed to run grep: {e}")))?;
+            .map_err(|e| ToolError(format!("Failed to run find+grep: {e}")))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -428,11 +448,12 @@ impl Tool for RunCommandTool {
         // Validate command against allowlist to prevent injection
         validate_command(&args.command)?;
 
-        let parts: Vec<&str> = args.command.split_whitespace().collect();
+        let parts = shell_words::split(&args.command)
+            .map_err(|e| ToolError(format!("Failed to parse command: {e}")))?;
         if parts.is_empty() {
             return Err(ToolError("Empty command".into()));
         }
-        let child = tokio::process::Command::new(parts[0])
+        let child = tokio::process::Command::new(&parts[0])
             .args(&parts[1..])
             .current_dir(&self.work_dir)
             .stdout(std::process::Stdio::piped())
@@ -497,11 +518,14 @@ fn build_coder_prompt(
     prompt_ctx: &PromptContext<'_>,
 ) -> Result<String, RewindError> {
     let mut context_map = HashMap::new();
-    context_map.insert("task_title".to_string(), task_title.to_string());
-    context_map.insert("task_description".to_string(), task_description.to_string());
+    context_map.insert("task_title".to_string(), sanitize_user_content(task_title));
+    context_map.insert(
+        "task_description".to_string(),
+        sanitize_user_content(task_description),
+    );
     context_map.insert(
         "acceptance_criteria".to_string(),
-        format_acceptance_criteria(acceptance_criteria),
+        sanitize_user_content(&format_acceptance_criteria(acceptance_criteria)),
     );
     if let Some(epic) = prompt_ctx.epic_name {
         context_map.insert("epic".to_string(), epic.to_string());
@@ -527,6 +551,24 @@ pub struct PromptContext<'a> {
     pub template_path: Option<&'a Path>,
 }
 
+/// Trait abstracting the coder agent for testability.
+///
+/// The orchestrator depends on this trait rather than on the concrete
+/// `CoderAgent`, allowing tests to inject a mock implementation that
+/// doesn't require a real LLM or the rig agent framework.
+#[async_trait::async_trait]
+pub trait TaskExecutor: Send + Sync {
+    async fn execute_task(
+        &self,
+        task_title: &str,
+        task_description: &str,
+        acceptance_criteria: &[AcceptanceCriterion],
+        work_dir: PathBuf,
+        timeout_secs: u64,
+        prompt_ctx: &PromptContext<'_>,
+    ) -> Result<(Vec<ToolCallRecord>, String), RewindError>;
+}
+
 /// LLM-powered coder agent using rig-core with tool-use.
 pub struct CoderAgent {
     client: ProviderClient,
@@ -537,12 +579,12 @@ impl CoderAgent {
     pub fn new(client: ProviderClient, config: AgentConfig) -> Self {
         Self { client, config }
     }
+}
 
-    /// Execute a task using the coder agent with tool-use loop.
-    ///
-    /// Returns the tool call log and the agent's final response.
+#[async_trait::async_trait]
+impl TaskExecutor for CoderAgent {
     #[hotpath::measure]
-    pub async fn execute_task(
+    async fn execute_task(
         &self,
         task_title: &str,
         task_description: &str,
@@ -587,6 +629,17 @@ impl CoderAgent {
         let response: String = match &self.client {
             ProviderClient::Anthropic(c) => build_and_run!(c),
             ProviderClient::OpenAI(c) => build_and_run!(c),
+            #[cfg(test)]
+            ProviderClient::Mock(f) => {
+                // In test mode, skip the rig agent framework entirely.
+                // Call the mock function with coder model as the "model" param.
+                f(
+                    &self.config.coder.model,
+                    &system_prompt,
+                    self.config.coder.max_tokens as u64,
+                    prompt_input,
+                )
+            }
         };
 
         let records = log.lock().await.clone();
@@ -598,11 +651,133 @@ impl CoderAgent {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Validate that a requested path stays within the work directory.
+///
+/// Joins `work_dir` with `requested`, canonicalizes both, and checks the
+/// result is a descendant of the canonical `work_dir`. Returns the validated
+/// canonical path or an error if the path escapes the sandbox.
+///
+/// **Known limitation (TOCTOU):** There is a time-of-check-time-of-use window
+/// between this validation and the subsequent file operation. A symlink created
+/// after canonicalization but before the read/write could escape the sandbox.
+/// This risk is mitigated by the agent running in a controlled environment
+/// (dedicated worktree) where no concurrent actor is manipulating the filesystem.
+fn validate_path(work_dir: &Path, requested: &str) -> Result<PathBuf, ToolError> {
+    let canonical_work_dir = work_dir.canonicalize().map_err(|e| {
+        ToolError(format!(
+            "Failed to canonicalize work_dir {}: {e}",
+            work_dir.display()
+        ))
+    })?;
+
+    let requested_path = Path::new(requested);
+
+    // If the requested path is absolute, check it directly instead of joining
+    let joined = if requested_path.is_absolute() {
+        requested_path.to_path_buf()
+    } else {
+        work_dir.join(requested)
+    };
+
+    let canonical = joined.canonicalize().map_err(|e| {
+        ToolError(format!(
+            "Failed to canonicalize path {}: {e}",
+            joined.display()
+        ))
+    })?;
+
+    if !canonical.starts_with(&canonical_work_dir) {
+        return Err(ToolError(format!(
+            "Path traversal denied: {} escapes work directory {}",
+            requested,
+            work_dir.display()
+        )));
+    }
+
+    Ok(canonical)
+}
+
+/// Validate a path for write operations where the file may not exist yet.
+///
+/// Similar to `validate_path` but canonicalizes the parent directory instead,
+/// since the target file may not exist yet.
+fn validate_path_for_write(work_dir: &Path, requested: &str) -> Result<PathBuf, ToolError> {
+    let canonical_work_dir = work_dir.canonicalize().map_err(|e| {
+        ToolError(format!(
+            "Failed to canonicalize work_dir {}: {e}",
+            work_dir.display()
+        ))
+    })?;
+
+    let requested_path = Path::new(requested);
+
+    let joined = if requested_path.is_absolute() {
+        requested_path.to_path_buf()
+    } else {
+        work_dir.join(requested)
+    };
+
+    // For writes, the file may not exist yet, so canonicalize the parent
+    let parent = joined.parent().ok_or_else(|| {
+        ToolError(format!(
+            "Path has no parent directory: {}",
+            joined.display()
+        ))
+    })?;
+
+    // The parent must exist (or we need to check what we can resolve)
+    // Walk up until we find an existing ancestor, canonicalize that,
+    // then re-append the remaining components
+    let mut existing = parent.to_path_buf();
+    let mut remaining = Vec::new();
+    while !existing.exists() {
+        if let Some(file_name) = existing.file_name() {
+            remaining.push(file_name.to_owned());
+            existing = existing
+                .parent()
+                .ok_or_else(|| ToolError(format!("Cannot resolve path: {}", joined.display())))?
+                .to_path_buf();
+        } else {
+            return Err(ToolError(format!(
+                "Cannot resolve path: {}",
+                joined.display()
+            )));
+        }
+    }
+
+    let mut canonical_parent = existing.canonicalize().map_err(|e| {
+        ToolError(format!(
+            "Failed to canonicalize {}: {e}",
+            existing.display()
+        ))
+    })?;
+
+    // Re-append the non-existing components
+    for component in remaining.into_iter().rev() {
+        canonical_parent.push(component);
+    }
+
+    if !canonical_parent.starts_with(&canonical_work_dir) {
+        return Err(ToolError(format!(
+            "Path traversal denied: {} escapes work directory {}",
+            requested,
+            work_dir.display()
+        )));
+    }
+
+    // Return the full path (parent + filename)
+    if let Some(file_name) = joined.file_name() {
+        Ok(canonical_parent.join(file_name))
+    } else {
+        Ok(canonical_parent)
+    }
+}
+
 /// Allowed command prefixes for RunCommandTool.
 const ALLOWED_COMMANDS: &[&str] = &[
-    "cargo", "rustfmt", "rustc", "make", "git", "ls", "cat", "head", "tail",
-    "grep", "rg", "find", "wc", "sort", "uniq", "diff", "echo", "pwd", "env",
-    "mkdir", "cp", "mv", "touch", "rm", "tree", "which", "test",
+    "cargo", "rustfmt", "rustc", "make", "git", "ls", "cat", "head", "tail", "grep", "rg", "find",
+    "wc", "sort", "uniq", "diff", "echo", "pwd", "env", "mkdir", "cp", "mv", "touch", "rm", "tree",
+    "which", "test",
 ];
 
 /// Shell metacharacters that indicate injection attempts.
@@ -623,7 +798,12 @@ fn validate_command(command: &str) -> Result<(), ToolError> {
     }
 
     let program = trimmed.split_whitespace().next().unwrap_or("");
-    if !ALLOWED_COMMANDS.contains(&program) {
+    // Extract basename to prevent path-based bypass (e.g., /bin/sh)
+    let basename = std::path::Path::new(program)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(program);
+    if !ALLOWED_COMMANDS.contains(&basename) {
         return Err(ToolError(format!(
             "Command not allowed: {program}. Allowed: {}",
             ALLOWED_COMMANDS.join(", ")
@@ -676,8 +856,15 @@ mod tests {
             },
         ];
 
-        let prompt =
-            build_coder_prompt("My Task", "Do the thing", &criteria, &PromptContext::default()).unwrap();
+        let prompt = build_coder_prompt(
+            "My Task",
+            "Do the thing",
+            &criteria,
+            &PromptContext::default(),
+        )
+        .unwrap();
+        // User content is now wrapped in <user-task> delimiters
+        assert!(prompt.contains("<user-task>"));
         assert!(prompt.contains("My Task"));
         assert!(prompt.contains("Do the thing"));
         assert!(prompt.contains("- [ ] File exists"));
@@ -714,7 +901,10 @@ mod tests {
             ..Default::default()
         };
         let prompt = build_coder_prompt("My Task", "desc", &criteria, &ctx).unwrap();
-        assert_eq!(prompt, "Custom: My Task - Epic-1");
+        // task_title is sanitized with <user-task> delimiters; epic is not user content
+        assert!(prompt.contains("My Task"));
+        assert!(prompt.contains("Epic-1"));
+        assert!(prompt.starts_with("Custom: "));
     }
 
     #[tokio::test]
@@ -815,6 +1005,34 @@ mod tests {
     }
 
     #[test]
+    fn validate_command_rejects_path_based_invocation() {
+        assert!(validate_command("/bin/sh -c whoami").is_err());
+        assert!(validate_command("/usr/bin/python -c 'import os'").is_err());
+        assert!(validate_command("/bin/bash --norc").is_err());
+        assert!(validate_command("/usr/bin/curl http://evil.com").is_err());
+    }
+
+    #[test]
+    fn validate_command_allows_path_to_allowed_command() {
+        // Path-based invocation of allowed commands should work
+        assert!(validate_command("/usr/bin/git status").is_ok());
+        assert!(validate_command("/usr/bin/ls -la").is_ok());
+    }
+
+    #[test]
+    fn shell_words_split_handles_quoted_args() {
+        // Verify shell_words correctly splits commands with quoted arguments
+        let parts = shell_words::split(r#"cargo test --test "my test with spaces""#).unwrap();
+        assert_eq!(parts, vec!["cargo", "test", "--test", "my test with spaces"]);
+
+        let parts = shell_words::split("echo 'hello world'").unwrap();
+        assert_eq!(parts, vec!["echo", "hello world"]);
+
+        let parts = shell_words::split("grep -rn \"fn main\" src/").unwrap();
+        assert_eq!(parts, vec!["grep", "-rn", "fn main", "src/"]);
+    }
+
+    #[test]
     fn validate_command_rejects_empty() {
         assert!(validate_command("").is_err());
         assert!(validate_command("   ").is_err());
@@ -863,6 +1081,203 @@ mod tests {
 
         assert!(result.is_err());
         tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn search_code_does_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+
+        // Create a secret file outside the work dir
+        std::fs::write(outside.path().join("secret.txt"), "SECRET_DATA_HERE").unwrap();
+
+        // Create a symlink inside work_dir pointing to the outside dir
+        symlink(outside.path(), dir.path().join("escape")).unwrap();
+
+        // Also create a real file inside work_dir so grep has something to find
+        std::fs::write(dir.path().join("real.txt"), "normal data").unwrap();
+
+        let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
+        let tool = SearchCodeTool::new(dir.path().to_path_buf(), log);
+
+        let result = tool
+            .call(SearchCodeArgs {
+                pattern: "SECRET_DATA_HERE".into(),
+                path: None,
+                file_ext: None,
+            })
+            .await
+            .unwrap();
+
+        // find -type f does not follow symlinks, so SECRET_DATA_HERE should not appear
+        assert!(
+            !result.contains("SECRET_DATA_HERE"),
+            "grep should not follow symlinks into outside directory, got: {result}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Path traversal protection tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_path_allows_normal_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hello.txt");
+        std::fs::write(&file, "hi").unwrap();
+
+        let result = validate_path(dir.path(), "hello.txt");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), file.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn validate_path_rejects_dotdot_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create a file inside, then try to escape
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+
+        let result = validate_path(dir.path(), "../../../etc/passwd");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("traversal denied") || err.contains("Failed to canonicalize"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_path_rejects_absolute_path_outside() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = validate_path(dir.path(), "/etc/passwd");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("traversal denied") || err.contains("Failed to canonicalize"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_path_allows_subdirectory() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("f.txt"), "data").unwrap();
+
+        let result = validate_path(dir.path(), "sub/f.txt");
+        assert!(result.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_path_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+
+        // Create a symlink inside work_dir pointing outside
+        symlink(outside.path(), dir.path().join("escape_link")).unwrap();
+
+        let result = validate_path(dir.path(), "escape_link/secret.txt");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("traversal denied"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn validate_path_for_write_allows_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = validate_path_for_write(dir.path(), "new_file.txt");
+        assert!(result.is_ok());
+        // Should end with new_file.txt
+        assert!(result.unwrap().ends_with("new_file.txt"));
+    }
+
+    #[test]
+    fn validate_path_for_write_allows_new_subdir() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = validate_path_for_write(dir.path(), "newdir/file.txt");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_path_for_write_rejects_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = validate_path_for_write(dir.path(), "../../evil.txt");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("traversal denied"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ok.txt"), "safe").unwrap();
+
+        let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
+        let tool = ReadFileTool::new(dir.path().to_path_buf(), log);
+
+        let result = tool
+            .call(ReadFileArgs {
+                path: "../../etc/passwd".into(),
+            })
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn write_file_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
+        let tool = WriteFileTool::new(dir.path().to_path_buf(), log);
+
+        let result = tool
+            .call(WriteFileArgs {
+                path: "../../tmp/evil.txt".into(),
+                content: "pwned".into(),
+            })
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn list_files_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
+        let tool = ListFilesTool::new(dir.path().to_path_buf(), log);
+
+        let result = tool
+            .call(ListFilesArgs {
+                path: "../../etc".into(),
+                pattern: None,
+            })
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn search_code_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let log: ToolCallLog = Arc::new(Mutex::new(Vec::new()));
+        let tool = SearchCodeTool::new(dir.path().to_path_buf(), log);
+
+        let result = tool
+            .call(SearchCodeArgs {
+                pattern: "root".into(),
+                path: Some("../../etc".into()),
+                file_ext: None,
+            })
+            .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

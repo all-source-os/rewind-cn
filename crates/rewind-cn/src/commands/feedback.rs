@@ -79,7 +79,9 @@ fn format_issue_body(
     );
 
     if let Some(report) = report {
-        body.push_str("\n## Diagnostic Report\n\n<details>\n<summary>Click to expand</summary>\n\n```json\n");
+        body.push_str(
+            "\n## Diagnostic Report\n\n<details>\n<summary>Click to expand</summary>\n\n```json\n",
+        );
         body.push_str(report);
         body.push_str("\n```\n\n</details>\n");
     }

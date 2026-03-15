@@ -1,6 +1,6 @@
 //! Integration tests for iteration history query (US-011).
 
-use rewind_cn_core::application::commands::{CreateEpic, CreateTask, StartTask, AssignTask};
+use rewind_cn_core::application::commands::{AssignTask, CreateEpic, CreateTask, StartTask};
 use rewind_cn_core::domain::events::RewindEvent;
 use rewind_cn_core::domain::ids::AgentId;
 use rewind_cn_core::infrastructure::engine::RewindEngine;
@@ -239,7 +239,11 @@ async fn iteration_history_multiple_tasks_in_same_session() {
     let analytics = analytics.read().await;
     let iterations = analytics.iteration_history(session_id.as_ref());
 
-    assert_eq!(iterations.len(), 3, "Should have iterations from both tasks");
+    assert_eq!(
+        iterations.len(),
+        3,
+        "Should have iterations from both tasks"
+    );
     // Verify both task IDs are present
     let task_ids: Vec<String> = iterations.iter().map(|i| i.task_id.to_string()).collect();
     assert!(task_ids.contains(&t1.to_string()));

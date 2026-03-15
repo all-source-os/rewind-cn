@@ -77,7 +77,11 @@ async fn progress_notes_returns_all_notes() {
     let analytics = analytics.read().await;
     let notes = analytics.progress_notes(None, None);
 
-    assert_eq!(notes.len(), 2, "Should have TaskCompleted + Discretionary notes");
+    assert_eq!(
+        notes.len(),
+        2,
+        "Should have TaskCompleted + Discretionary notes"
+    );
     assert_eq!(format!("{:?}", notes[0].note_type), "TaskCompleted");
     assert_eq!(format!("{:?}", notes[1].note_type), "Discretionary");
     assert!(notes[1].note.contains("error handling"));

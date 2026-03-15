@@ -161,11 +161,15 @@ fn filter_session_events(events: &[RewindEvent], session_id: &str) -> Vec<Rewind
 
     for event in events {
         match event {
-            RewindEvent::SessionStarted { session_id: sid, .. } if sid.to_string() == session_id => {
+            RewindEvent::SessionStarted {
+                session_id: sid, ..
+            } if sid.to_string() == session_id => {
                 in_session = true;
                 result.push(event.clone());
             }
-            RewindEvent::SessionEnded { session_id: sid, .. } if sid.to_string() == session_id => {
+            RewindEvent::SessionEnded {
+                session_id: sid, ..
+            } if sid.to_string() == session_id => {
                 result.push(event.clone());
                 break;
             }
@@ -191,7 +195,10 @@ fn anonymize_event(event: &RewindEvent) -> serde_json::Value {
     if let Some(obj) = value.as_object_mut() {
         // Hash title fields
         if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
-            obj.insert("title".into(), serde_json::Value::String(hash_string(title)));
+            obj.insert(
+                "title".into(),
+                serde_json::Value::String(hash_string(title)),
+            );
         }
 
         // Strip description fields
@@ -356,9 +363,6 @@ mod tests {
         );
 
         // project_name should not be redacted
-        assert_eq!(
-            table.get("project_name").unwrap().as_str().unwrap(),
-            "test"
-        );
+        assert_eq!(table.get("project_name").unwrap().as_str().unwrap(), "test");
     }
 }

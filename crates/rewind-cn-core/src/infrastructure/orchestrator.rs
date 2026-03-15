@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Utc;
-use tokio::sync::Semaphore;
-use tracing::{debug, info, warn};
 use std::time::Instant;
+use tokio::sync::Semaphore;
+use tracing::{debug, error, info, warn};
 
 use crate::application::commands::{AssignTask, CompleteTask, FailTask, StartTask};
 use crate::domain::error::RewindError;
@@ -12,7 +12,7 @@ use crate::domain::events::RewindEvent;
 use crate::domain::ids::{AgentId, SessionId, TaskId};
 use crate::domain::model::TaskView;
 use crate::infrastructure::chronis::ChronisBridge;
-use crate::infrastructure::coder::{CoderAgent, PromptContext, ToolCallRecord};
+use crate::infrastructure::coder::{CoderAgent, PromptContext, TaskExecutor, ToolCallRecord};
 use crate::infrastructure::engine::RewindEngine;
 use crate::infrastructure::evaluator::EvaluatorAgent;
 use crate::infrastructure::llm::{AgentConfig, ProviderClient};
@@ -20,7 +20,7 @@ use crate::infrastructure::worktree::WorktreeManager;
 
 /// Orchestrator runs the SELECT → PROMPT → EXECUTE → EVALUATE loop.
 pub struct Orchestrator {
-    coder: CoderAgent,
+    coder: Box<dyn TaskExecutor>,
     evaluator: EvaluatorAgent,
     agent_id: AgentId,
     work_dir: PathBuf,
@@ -48,7 +48,7 @@ impl Orchestrator {
         }
 
         Self {
-            coder: CoderAgent::new(coder_client, config.clone()),
+            coder: Box::new(CoderAgent::new(coder_client, config.clone())),
             evaluator: EvaluatorAgent::new(evaluator_client, config),
             agent_id: AgentId::generate(),
             work_dir,
@@ -82,7 +82,7 @@ impl Orchestrator {
     /// Create an orchestrator without chronis (for tests).
     #[cfg(test)]
     pub fn without_chronis(
-        coder_client: ProviderClient,
+        coder: Box<dyn TaskExecutor>,
         evaluator_client: ProviderClient,
         config: AgentConfig,
         work_dir: PathBuf,
@@ -90,7 +90,7 @@ impl Orchestrator {
         max_retries: u32,
     ) -> Self {
         Self {
-            coder: CoderAgent::new(coder_client, config.clone()),
+            coder,
             evaluator: EvaluatorAgent::new(evaluator_client, config),
             agent_id: AgentId::generate(),
             work_dir,
@@ -131,6 +131,18 @@ impl Orchestrator {
         let mut retry_counts: std::collections::HashMap<String, u32> =
             std::collections::HashMap::new();
 
+        // Termination guarantee:
+        // - `retry_counts` is a local HashMap that persists across loop iterations,
+        //   so per-task retry count is never lost even when a task is re-queued.
+        // - When retries < max_retries: TaskRetried resets the task to Pending,
+        //   making it runnable again — but the counter in retry_counts still
+        //   increments, bounding total attempts to max_retries per task.
+        // - When retries >= max_retries: task stays Failed, increments `failed`,
+        //   and pick_runnable_tasks will never select it again.
+        // - If engine.retry_task() itself fails: task stays Failed (not re-queued),
+        //   so it won't be picked again. We increment `failed` and move on.
+        // - The loop breaks when pick_runnable_tasks returns empty, which must
+        //   eventually happen because each task either completes or exhausts retries.
         loop {
             // Rebuild projections to see current state
             engine.rebuild_projections().await?;
@@ -148,18 +160,19 @@ impl Orchestrator {
                 break;
             }
 
-            let total = tasks.len();
+            let batch_size = tasks.len();
             for (i, task) in tasks.iter().enumerate() {
-                eprint!(
-                    "[{}/{}] Executing: {}... ",
-                    completed + failed + i + 1,
-                    completed + failed + total,
-                    task.title
+                info!(
+                    task = %task.title,
+                    batch_progress = format!("{}/{}", i + 1, batch_size),
+                    completed,
+                    failed,
+                    "Executing task"
                 );
 
                 match self.execute_task(task, engine).await {
                     Ok(true) => {
-                        eprintln!("done");
+                        info!(task = %task.title, "Task completed successfully");
                         completed += 1;
                     }
                     Ok(false) => {
@@ -167,16 +180,34 @@ impl Orchestrator {
                         *retries += 1;
 
                         if *retries < self.max_retries {
-                            eprintln!("FAILED (retry {}/{})", retries, self.max_retries);
-                            // Task was marked failed, would need to be re-queued
-                            // For now, count as failed
+                            warn!(
+                                task = %task.title,
+                                retry = *retries,
+                                max_retries = self.max_retries,
+                                "Task failed, retrying"
+                            );
+                            // Re-queue: emit TaskRetried to reset status to Pending
+                            if let Err(e) = engine
+                                .retry_task(crate::application::commands::RetryTask {
+                                    task_id: task.task_id.clone(),
+                                    retry_number: *retries,
+                                })
+                                .await
+                            {
+                                warn!(task = %task.title, error = %e, "Failed to re-queue task for retry");
+                                failed += 1;
+                            }
                         } else {
-                            eprintln!("FAILED (max retries reached)");
+                            error!(
+                                task = %task.title,
+                                max_retries = self.max_retries,
+                                "Task failed, max retries reached"
+                            );
+                            failed += 1;
                         }
-                        failed += 1;
                     }
                     Err(e) => {
-                        eprintln!("ERROR: {e}");
+                        error!(task = %task.title, error = %e, "Task execution error");
                         failed += 1;
                     }
                 }
@@ -420,7 +451,7 @@ impl Orchestrator {
                         task_id: task_id.clone(),
                     };
 
-                    eprintln!("[{task_id}] Starting in worktree...");
+                    info!(task_id = %task_id, "Starting task in worktree");
 
                     let result = orchestrator
                         .execute_task_in_dir(&task, &engine, worktree_path)
@@ -430,20 +461,20 @@ impl Orchestrator {
 
                     match result {
                         Ok(true) => {
-                            eprintln!("[{task_id}] PASSED — merging...");
+                            info!(task_id = %task_id, "Task passed, merging worktree");
                             if let Err(e) = wt_mgr.merge_back(&task_id) {
-                                eprintln!("[{task_id}] Merge failed: {e}");
+                                error!(task_id = %task_id, error = %e, "Worktree merge failed");
                                 failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             } else {
                                 completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
                         Ok(false) => {
-                            eprintln!("[{task_id}] FAILED");
+                            warn!(task_id = %task_id, "Task failed evaluation");
                             failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                         Err(e) => {
-                            eprintln!("[{task_id}] ERROR: {e}");
+                            error!(task_id = %task_id, error = %e, "Task execution error");
                             failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
@@ -539,7 +570,11 @@ mod tests {
             .filter(|e| matches!(e, RewindEvent::IterationLogged { .. }))
             .collect();
 
-        assert_eq!(iteration_events.len(), 2, "Should have 2 IterationLogged events");
+        assert_eq!(
+            iteration_events.len(),
+            2,
+            "Should have 2 IterationLogged events"
+        );
 
         match &iteration_events[0] {
             RewindEvent::IterationLogged {
@@ -571,6 +606,376 @@ mod tests {
             }
             _ => panic!("Expected IterationLogged"),
         }
+    }
+
+    /// Mock evaluator client that always returns the given string.
+    fn mock_eval_client(response: &str) -> ProviderClient {
+        let resp = response.to_string();
+        ProviderClient::Mock(std::sync::Arc::new(move |_, _, _, _| resp.clone()))
+    }
+
+    /// Mock evaluator client with sequenced responses.
+    fn mock_eval_client_sequenced(responses: Vec<String>) -> ProviderClient {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        ProviderClient::Mock(std::sync::Arc::new(move |_, _, _, _| {
+            let idx = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            responses
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| responses.last().cloned().unwrap_or_default())
+        }))
+    }
+
+    /// JSON for an evaluator response that passes all criteria.
+    fn eval_pass_json() -> String {
+        r#"{"passed":true,"criteria_results":[{"index":0,"passed":true,"reason":"Done"}],"summary":"All good"}"#.into()
+    }
+
+    /// JSON for an evaluator response that fails.
+    fn eval_fail_json() -> String {
+        r#"{"passed":false,"criteria_results":[{"index":0,"passed":false,"reason":"Not done"}],"summary":"Failed"}"#.into()
+    }
+
+    /// Mock TaskExecutor that returns a fixed response string (no tool calls).
+    struct MockTaskExecutor {
+        response: String,
+    }
+
+    impl MockTaskExecutor {
+        fn new(response: &str) -> Box<dyn TaskExecutor> {
+            Box::new(Self {
+                response: response.to_string(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TaskExecutor for MockTaskExecutor {
+        async fn execute_task(
+            &self,
+            _task_title: &str,
+            _task_description: &str,
+            _acceptance_criteria: &[crate::domain::events::AcceptanceCriterion],
+            _work_dir: PathBuf,
+            _timeout_secs: u64,
+            _prompt_ctx: &PromptContext<'_>,
+        ) -> Result<(Vec<ToolCallRecord>, String), crate::domain::error::RewindError> {
+            Ok((vec![], self.response.clone()))
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_runnable_completes_single_task() {
+        use crate::application::commands::CreateTask;
+        use crate::domain::events::AcceptanceCriterion;
+        use crate::domain::model::TaskStatus;
+
+        let engine = RewindEngine::in_memory().await;
+
+        // Create a task
+        engine
+            .create_task(CreateTask {
+                title: "Test task".into(),
+                description: "A test task".into(),
+                epic_id: None,
+                acceptance_criteria: vec![AcceptanceCriterion {
+                    description: "It works".into(),
+                    checked: false,
+                }],
+                story_type: None,
+                depends_on: vec![],
+            })
+            .await
+            .unwrap();
+
+        let config = AgentConfig::default();
+        let work_dir = std::env::temp_dir().join("rewind-orch-test-1");
+        std::fs::create_dir_all(&work_dir).ok();
+
+        let orchestrator = Orchestrator::without_chronis(
+            MockTaskExecutor::new("Task completed successfully"),
+            mock_eval_client(&eval_pass_json()),
+            config,
+            work_dir.clone(),
+            30,
+            3,
+        );
+
+        let (completed, failed) = orchestrator.execute_runnable(&engine, 1).await.unwrap();
+
+        assert_eq!(completed, 1, "Expected 1 completed task");
+        assert_eq!(failed, 0, "Expected 0 failed tasks");
+
+        // Verify task reached Completed status
+        let backlog = engine.backlog();
+        let backlog = backlog.read().await;
+        let task = backlog.tasks.values().next().unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
+
+        std::fs::remove_dir_all(&work_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn execute_runnable_handles_multiple_tasks() {
+        use crate::application::commands::CreateTask;
+        use crate::domain::events::AcceptanceCriterion;
+
+        let engine = RewindEngine::in_memory().await;
+
+        for i in 0..3 {
+            engine
+                .create_task(CreateTask {
+                    title: format!("Task {i}"),
+                    description: format!("Description {i}"),
+                    epic_id: None,
+                    acceptance_criteria: vec![AcceptanceCriterion {
+                        description: "Criterion".into(),
+                        checked: false,
+                    }],
+                    story_type: None,
+                    depends_on: vec![],
+                })
+                .await
+                .unwrap();
+        }
+
+        let config = AgentConfig::default();
+        let work_dir = std::env::temp_dir().join("rewind-orch-test-multi");
+        std::fs::create_dir_all(&work_dir).ok();
+
+        let orchestrator = Orchestrator::without_chronis(
+            MockTaskExecutor::new("Done"),
+            mock_eval_client(&eval_pass_json()),
+            config,
+            work_dir.clone(),
+            30,
+            3,
+        );
+
+        let (completed, failed) = orchestrator.execute_runnable(&engine, 5).await.unwrap();
+
+        assert_eq!(completed, 3, "Expected 3 completed tasks");
+        assert_eq!(failed, 0, "Expected 0 failed tasks");
+
+        std::fs::remove_dir_all(&work_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn execute_runnable_fails_task_after_max_retries() {
+        use crate::application::commands::CreateTask;
+        use crate::domain::events::AcceptanceCriterion;
+        use crate::domain::model::TaskStatus;
+
+        let engine = RewindEngine::in_memory().await;
+
+        engine
+            .create_task(CreateTask {
+                title: "Failing task".into(),
+                description: "Will always fail".into(),
+                epic_id: None,
+                acceptance_criteria: vec![AcceptanceCriterion {
+                    description: "Impossible".into(),
+                    checked: false,
+                }],
+                story_type: None,
+                depends_on: vec![],
+            })
+            .await
+            .unwrap();
+
+        let config = AgentConfig::default();
+        let work_dir = std::env::temp_dir().join("rewind-orch-test-fail");
+        std::fs::create_dir_all(&work_dir).ok();
+
+        let max_retries = 2;
+        let orchestrator = Orchestrator::without_chronis(
+            MockTaskExecutor::new("Attempted the task"),
+            mock_eval_client(&eval_fail_json()),
+            config,
+            work_dir.clone(),
+            30,
+            max_retries,
+        );
+
+        let (completed, failed) = orchestrator.execute_runnable(&engine, 1).await.unwrap();
+
+        assert_eq!(completed, 0, "Expected 0 completed tasks");
+        assert_eq!(failed, 1, "Expected 1 failed task after max retries");
+
+        // Verify task reached Failed status
+        engine.rebuild_projections().await.unwrap();
+        let backlog = engine.backlog();
+        let backlog = backlog.read().await;
+        let task = backlog.tasks.values().next().unwrap();
+        assert_eq!(task.status, TaskStatus::Failed);
+
+        std::fs::remove_dir_all(&work_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn execute_runnable_retry_then_succeed() {
+        use crate::application::commands::CreateTask;
+        use crate::domain::events::AcceptanceCriterion;
+        use crate::domain::model::TaskStatus;
+
+        let engine = RewindEngine::in_memory().await;
+
+        engine
+            .create_task(CreateTask {
+                title: "Retry task".into(),
+                description: "Fails first, passes second".into(),
+                epic_id: None,
+                acceptance_criteria: vec![AcceptanceCriterion {
+                    description: "Eventually works".into(),
+                    checked: false,
+                }],
+                story_type: None,
+                depends_on: vec![],
+            })
+            .await
+            .unwrap();
+
+        let config = AgentConfig::default();
+        let work_dir = std::env::temp_dir().join("rewind-orch-test-retry");
+        std::fs::create_dir_all(&work_dir).ok();
+
+        // Evaluator: first call fails, second call passes
+        let max_retries = 3;
+        let orchestrator = Orchestrator::without_chronis(
+            MockTaskExecutor::new("Working on it"),
+            mock_eval_client_sequenced(vec![eval_fail_json(), eval_pass_json()]),
+            config,
+            work_dir.clone(),
+            30,
+            max_retries,
+        );
+
+        let (completed, failed) = orchestrator.execute_runnable(&engine, 1).await.unwrap();
+
+        assert_eq!(completed, 1, "Expected task to eventually complete");
+        assert_eq!(failed, 0, "Expected 0 failed tasks");
+
+        // Verify task reached Completed status
+        engine.rebuild_projections().await.unwrap();
+        let backlog = engine.backlog();
+        let backlog = backlog.read().await;
+        let task = backlog.tasks.values().next().unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
+
+        // Verify retry event was emitted
+        let events = engine.event_store.get_all_events().await.unwrap();
+        let retry_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, RewindEvent::TaskRetried { .. }))
+            .collect();
+        assert_eq!(retry_events.len(), 1, "Expected exactly 1 retry event");
+
+        std::fs::remove_dir_all(&work_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn execute_runnable_respects_dependency_order() {
+        use crate::application::commands::CreateTask;
+        use crate::domain::events::AcceptanceCriterion;
+        use crate::domain::model::TaskStatus;
+
+        let engine = RewindEngine::in_memory().await;
+
+        // Create task A (no deps)
+        let events_a = engine
+            .create_task(CreateTask {
+                title: "Task A".into(),
+                description: "First task".into(),
+                epic_id: None,
+                acceptance_criteria: vec![AcceptanceCriterion {
+                    description: "A works".into(),
+                    checked: false,
+                }],
+                story_type: None,
+                depends_on: vec![],
+            })
+            .await
+            .unwrap();
+
+        let task_a_id = match &events_a[0] {
+            RewindEvent::TaskCreated { task_id, .. } => task_id.clone(),
+            _ => panic!("Expected TaskCreated"),
+        };
+
+        // Create task B that depends on A
+        engine
+            .create_task(CreateTask {
+                title: "Task B".into(),
+                description: "Depends on A".into(),
+                epic_id: None,
+                acceptance_criteria: vec![AcceptanceCriterion {
+                    description: "B works".into(),
+                    checked: false,
+                }],
+                story_type: None,
+                depends_on: vec![task_a_id],
+            })
+            .await
+            .unwrap();
+
+        let config = AgentConfig::default();
+        let work_dir = std::env::temp_dir().join("rewind-orch-test-deps");
+        std::fs::create_dir_all(&work_dir).ok();
+
+        let orchestrator = Orchestrator::without_chronis(
+            MockTaskExecutor::new("Done"),
+            mock_eval_client(&eval_pass_json()),
+            config,
+            work_dir.clone(),
+            30,
+            3,
+        );
+
+        // With max_concurrent=1, only Task A should run first (B is blocked)
+        let (completed, failed) = orchestrator.execute_runnable(&engine, 1).await.unwrap();
+
+        assert_eq!(completed, 2, "Both tasks should eventually complete");
+        assert_eq!(failed, 0, "No tasks should fail");
+
+        // Verify both tasks are completed
+        engine.rebuild_projections().await.unwrap();
+        let backlog = engine.backlog();
+        let backlog = backlog.read().await;
+        for task in backlog.tasks.values() {
+            assert_eq!(
+                task.status,
+                TaskStatus::Completed,
+                "Task '{}' should be completed",
+                task.title
+            );
+        }
+
+        std::fs::remove_dir_all(&work_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn execute_runnable_empty_backlog_returns_zeros() {
+        let engine = RewindEngine::in_memory().await;
+
+        let config = AgentConfig::default();
+        let work_dir = std::env::temp_dir().join("rewind-orch-test-empty");
+        std::fs::create_dir_all(&work_dir).ok();
+
+        let orchestrator = Orchestrator::without_chronis(
+            MockTaskExecutor::new("unused"),
+            mock_eval_client("unused"),
+            config,
+            work_dir.clone(),
+            30,
+            3,
+        );
+
+        let (completed, failed) = orchestrator.execute_runnable(&engine, 1).await.unwrap();
+
+        assert_eq!(completed, 0);
+        assert_eq!(failed, 0);
+
+        std::fs::remove_dir_all(&work_dir).ok();
     }
 
     #[test]

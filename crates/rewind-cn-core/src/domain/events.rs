@@ -39,7 +39,6 @@ pub struct QualityGate {
 pub enum ProgressNoteType {
     TaskCompleted,
     TaskFailed,
-    RetryLearning,
     Discretionary,
 }
 
@@ -91,6 +90,11 @@ pub enum RewindEvent {
         task_id: TaskId,
         reason: String,
         failed_at: DateTime<Utc>,
+    },
+    TaskRetried {
+        task_id: TaskId,
+        retry_number: u32,
+        retried_at: DateTime<Utc>,
     },
     TaskBlocked {
         task_id: TaskId,
@@ -185,7 +189,7 @@ mod tests {
             session_id: SessionId::new("sess-1"),
             task_id: Some(TaskId::new("task-1")),
             note: "Retry succeeded after increasing timeout".into(),
-            note_type: ProgressNoteType::RetryLearning,
+            note_type: ProgressNoteType::Discretionary,
             noted_at: Utc::now(),
         };
 
@@ -203,7 +207,7 @@ mod tests {
                 assert_eq!(session_id.to_string(), "sess-1");
                 assert_eq!(task_id.unwrap().to_string(), "task-1");
                 assert_eq!(note, "Retry succeeded after increasing timeout");
-                assert_eq!(note_type, ProgressNoteType::RetryLearning);
+                assert_eq!(note_type, ProgressNoteType::Discretionary);
             }
             other => panic!("expected ProgressNoted, got {other:?}"),
         }
@@ -223,7 +227,9 @@ mod tests {
         let back: RewindEvent = serde_json::from_str(&json).expect("deserialize");
 
         match back {
-            RewindEvent::ProgressNoted { task_id, note_type, .. } => {
+            RewindEvent::ProgressNoted {
+                task_id, note_type, ..
+            } => {
                 assert!(task_id.is_none());
                 assert_eq!(note_type, ProgressNoteType::Discretionary);
             }
