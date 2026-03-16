@@ -9,6 +9,8 @@ use crate::domain::error::RewindError;
 pub enum Provider {
     Anthropic,
     OpenAI,
+    /// Ollama (OpenAI-compatible API at localhost:11434).
+    Ollama,
 }
 
 impl Provider {
@@ -16,8 +18,9 @@ impl Provider {
         match s.to_lowercase().as_str() {
             "anthropic" | "claude" => Ok(Self::Anthropic),
             "openai" | "gpt" => Ok(Self::OpenAI),
+            "ollama" => Ok(Self::Ollama),
             other => Err(RewindError::Config(format!(
-                "Unknown provider '{other}'. Supported: anthropic, openai"
+                "Unknown provider '{other}'. Supported: anthropic, openai, ollama"
             ))),
         }
     }
@@ -26,6 +29,14 @@ impl Provider {
         match self {
             Self::Anthropic => "ANTHROPIC_API_KEY",
             Self::OpenAI => "OPENAI_API_KEY",
+            Self::Ollama => "OLLAMA_API_KEY",
+        }
+    }
+
+    fn default_base_url(&self) -> Option<&'static str> {
+        match self {
+            Self::Ollama => Some("http://localhost:11434/v1"),
+            _ => None,
         }
     }
 }
@@ -97,6 +108,10 @@ pub struct AgentConfig {
 
     #[serde(default)]
     pub evaluator: EvaluatorModelConfig,
+
+    /// Backend for the coder role: "api" (default, uses rig-core) or "claude-code" (shells out to claude CLI).
+    #[serde(default = "default_coder_backend")]
+    pub coder_backend: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -114,6 +129,10 @@ pub struct ModelConfig {
     /// Override API key env var for this role.
     #[serde(default)]
     pub api_key_env: Option<String>,
+
+    /// Custom base URL (e.g., "http://localhost:11434/v1" for Ollama).
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -131,6 +150,10 @@ pub struct EvaluatorModelConfig {
     /// Override API key env var for this role.
     #[serde(default)]
     pub api_key_env: Option<String>,
+
+    /// Custom base URL (e.g., "http://localhost:11434/v1" for Ollama).
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 fn default_provider() -> String {
@@ -153,6 +176,10 @@ fn default_max_tokens() -> usize {
     16384
 }
 
+fn default_coder_backend() -> String {
+    "api".into()
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -161,6 +188,7 @@ impl Default for AgentConfig {
             planner: ModelConfig::default(),
             coder: ModelConfig::default(),
             evaluator: EvaluatorModelConfig::default(),
+            coder_backend: default_coder_backend(),
         }
     }
 }
@@ -172,6 +200,7 @@ impl Default for ModelConfig {
             max_tokens: default_max_tokens(),
             provider: None,
             api_key_env: None,
+            base_url: None,
         }
     }
 }
@@ -183,87 +212,129 @@ impl Default for EvaluatorModelConfig {
             max_tokens: default_max_tokens(),
             provider: None,
             api_key_env: None,
+            base_url: None,
         }
     }
 }
 
-/// Resolve the effective provider and API key env var for a role,
+/// Resolved provider configuration for a role.
+struct ResolvedConfig {
+    provider: Provider,
+    api_key_env: String,
+    base_url: Option<String>,
+}
+
+/// Resolve the effective provider, API key env var, and base URL for a role,
 /// falling back to the global config defaults.
 fn resolve_provider_config(
     global_provider: &str,
     global_api_key_env: &str,
     role_provider: Option<&str>,
     role_api_key_env: Option<&str>,
-) -> (Provider, String) {
+    role_base_url: Option<&str>,
+) -> ResolvedConfig {
     let provider_str = role_provider.unwrap_or(global_provider);
     let provider = Provider::parse(provider_str).unwrap_or(Provider::Anthropic);
 
     let api_key_env = role_api_key_env.map(|s| s.to_string()).unwrap_or_else(|| {
         if role_provider.is_some() {
-            // Role has custom provider, use that provider's default key
             provider.default_api_key_env().to_string()
         } else {
             global_api_key_env.to_string()
         }
     });
 
-    (provider, api_key_env)
+    let base_url = role_base_url
+        .map(|s| s.to_string())
+        .or_else(|| provider.default_base_url().map(|s| s.to_string()));
+
+    ResolvedConfig {
+        provider,
+        api_key_env,
+        base_url,
+    }
 }
 
-/// Create a ProviderClient from resolved provider + env var.
-fn create_client(provider: Provider, api_key_env: &str) -> Result<ProviderClient, RewindError> {
-    let api_key = std::env::var(api_key_env).map_err(|_| {
-        RewindError::Config(format!(
-            "Environment variable '{api_key_env}' not set. Set it to your {provider:?} API key.",
-        ))
-    })?;
-
-    match provider {
-        Provider::Anthropic => {
-            let client = anthropic::Client::new(&api_key).map_err(|e| {
-                RewindError::Config(format!("Failed to create Anthropic client: {e}"))
-            })?;
-            Ok(ProviderClient::Anthropic(client))
-        }
-        Provider::OpenAI => {
-            let client = openai::Client::new(&api_key)
-                .map_err(|e| RewindError::Config(format!("Failed to create OpenAI client: {e}")))?;
+/// Create a ProviderClient from resolved config.
+fn create_client(resolved: &ResolvedConfig) -> Result<ProviderClient, RewindError> {
+    match resolved.provider {
+        Provider::Ollama => {
+            let base_url = resolved
+                .base_url
+                .as_deref()
+                .unwrap_or("http://localhost:11434/v1");
+            let client = openai::Client::builder()
+                .api_key("ollama")
+                .base_url(base_url)
+                .build()
+                .map_err(|e| RewindError::Config(format!("Failed to create Ollama client: {e}")))?;
             Ok(ProviderClient::OpenAI(client))
+        }
+        _ => {
+            let api_key = std::env::var(&resolved.api_key_env).map_err(|_| {
+                RewindError::Config(format!(
+                    "Environment variable '{}' not set. Set it to your {:?} API key.",
+                    resolved.api_key_env, resolved.provider
+                ))
+            })?;
+
+            match resolved.provider {
+                Provider::Anthropic => {
+                    let client = anthropic::Client::new(&api_key).map_err(|e| {
+                        RewindError::Config(format!("Failed to create Anthropic client: {e}"))
+                    })?;
+                    Ok(ProviderClient::Anthropic(client))
+                }
+                Provider::OpenAI => {
+                    let mut builder = openai::Client::builder().api_key(&api_key);
+                    if let Some(ref base_url) = resolved.base_url {
+                        builder = builder.base_url(base_url);
+                    }
+                    let client = builder.build().map_err(|e| {
+                        RewindError::Config(format!("Failed to create OpenAI client: {e}"))
+                    })?;
+                    Ok(ProviderClient::OpenAI(client))
+                }
+                Provider::Ollama => unreachable!(),
+            }
         }
     }
 }
 
 /// Create a ProviderClient for the planner role.
 pub fn create_planner_client(config: &AgentConfig) -> Result<ProviderClient, RewindError> {
-    let (provider, api_key_env) = resolve_provider_config(
+    let resolved = resolve_provider_config(
         &config.provider,
         &config.api_key_env,
         config.planner.provider.as_deref(),
         config.planner.api_key_env.as_deref(),
+        config.planner.base_url.as_deref(),
     );
-    create_client(provider, &api_key_env)
+    create_client(&resolved)
 }
 
 /// Create a ProviderClient for the coder role.
 pub fn create_coder_client(config: &AgentConfig) -> Result<ProviderClient, RewindError> {
-    let (provider, api_key_env) = resolve_provider_config(
+    let resolved = resolve_provider_config(
         &config.provider,
         &config.api_key_env,
         config.coder.provider.as_deref(),
         config.coder.api_key_env.as_deref(),
+        config.coder.base_url.as_deref(),
     );
-    create_client(provider, &api_key_env)
+    create_client(&resolved)
 }
 
 /// Create a ProviderClient for the evaluator role.
 pub fn create_evaluator_client(config: &AgentConfig) -> Result<ProviderClient, RewindError> {
-    let (provider, api_key_env) = resolve_provider_config(
+    let resolved = resolve_provider_config(
         &config.provider,
         &config.api_key_env,
         config.evaluator.provider.as_deref(),
         config.evaluator.api_key_env.as_deref(),
+        config.evaluator.base_url.as_deref(),
     );
-    create_client(provider, &api_key_env)
+    create_client(&resolved)
 }
 
 /// Create an Anthropic client from the agent config (backward-compatible convenience).
@@ -371,29 +442,61 @@ mod tests {
 
     #[test]
     fn resolve_provider_uses_role_override() {
-        let (provider, api_key_env) =
-            resolve_provider_config("anthropic", "ANTHROPIC_API_KEY", Some("openai"), None);
-        assert_eq!(provider, Provider::OpenAI);
-        assert_eq!(api_key_env, "OPENAI_API_KEY");
+        let resolved =
+            resolve_provider_config("anthropic", "ANTHROPIC_API_KEY", Some("openai"), None, None);
+        assert_eq!(resolved.provider, Provider::OpenAI);
+        assert_eq!(resolved.api_key_env, "OPENAI_API_KEY");
     }
 
     #[test]
     fn resolve_provider_falls_back_to_global() {
-        let (provider, api_key_env) = resolve_provider_config("anthropic", "MY_KEY", None, None);
-        assert_eq!(provider, Provider::Anthropic);
-        assert_eq!(api_key_env, "MY_KEY");
+        let resolved = resolve_provider_config("anthropic", "MY_KEY", None, None, None);
+        assert_eq!(resolved.provider, Provider::Anthropic);
+        assert_eq!(resolved.api_key_env, "MY_KEY");
     }
 
     #[test]
     fn resolve_provider_role_key_overrides_all() {
-        let (provider, api_key_env) = resolve_provider_config(
+        let resolved = resolve_provider_config(
             "anthropic",
             "ANTHROPIC_API_KEY",
             Some("openai"),
             Some("CUSTOM_KEY"),
+            None,
         );
-        assert_eq!(provider, Provider::OpenAI);
-        assert_eq!(api_key_env, "CUSTOM_KEY");
+        assert_eq!(resolved.provider, Provider::OpenAI);
+        assert_eq!(resolved.api_key_env, "CUSTOM_KEY");
+    }
+
+    #[test]
+    fn resolve_ollama_provider() {
+        let resolved = resolve_provider_config("ollama", "unused", None, None, None);
+        assert_eq!(resolved.provider, Provider::Ollama);
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("http://localhost:11434/v1")
+        );
+    }
+
+    #[test]
+    fn ollama_config_from_toml() {
+        let toml_str = r#"
+            provider = "anthropic"
+            coder_backend = "claude-code"
+
+            [evaluator]
+            provider = "ollama"
+            model = "llama3"
+
+            [planner]
+            provider = "ollama"
+            model = "llama3"
+        "#;
+
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.evaluator.provider, Some("ollama".into()));
+        assert_eq!(config.evaluator.model, "llama3");
+        assert_eq!(config.planner.provider, Some("ollama".into()));
     }
 
     #[test]

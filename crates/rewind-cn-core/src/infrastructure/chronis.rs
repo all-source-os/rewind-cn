@@ -20,11 +20,21 @@ pub struct ChronisTask {
     pub status: String,
 }
 
+/// An epic with its child task list from `cn show <id> --toon`.
+#[derive(Debug, Clone)]
+pub struct ChronisEpic {
+    pub id: String,
+    pub title: String,
+    pub priority: String,
+    pub status: String,
+    pub children: Vec<ChronisTask>,
+}
+
 impl ChronisBridge {
     /// Check if the `cn` CLI is available on PATH.
     pub fn is_available() -> bool {
         Command::new("cn")
-            .arg("--version")
+            .arg("--help")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -61,6 +71,18 @@ impl ChronisBridge {
     pub fn list_tasks() -> Result<Vec<ChronisTask>, RewindError> {
         let output = run_cn(&["list", "--toon"])?;
         parse_toon_list(&output)
+    }
+
+    /// List epics: `cn list --type epic --toon`.
+    pub fn list_epics() -> Result<Vec<ChronisTask>, RewindError> {
+        let output = run_cn(&["list", "--type", "epic", "--toon"])?;
+        parse_toon_list(&output)
+    }
+
+    /// Show epic detail with child tasks: `cn show <id> --toon`.
+    pub fn show_epic(epic_id: &str) -> Result<ChronisEpic, RewindError> {
+        let output = run_cn(&["show", epic_id, "--toon"])?;
+        parse_epic_detail(&output)
     }
 
     /// Show a single task: `cn show <id> --toon`.
@@ -206,6 +228,92 @@ fn parse_toon_list(output: &str) -> Result<Vec<ChronisTask>, RewindError> {
     Ok(tasks)
 }
 
+/// Parse `cn show <epic> --toon` output into a `ChronisEpic`.
+///
+/// Format:
+/// ```text
+/// id:t-f024
+/// type:epic
+/// title:PRD-007: ...
+/// priority:p2
+/// status:open
+/// archived:false
+/// ---
+/// [id|status|title]
+/// t-7c7e|open|US-007-01: RouterClient with failover
+/// ...
+/// [timestamp|event_type]
+/// 2026-03-11 20:02:00|task.created
+/// ```
+fn parse_epic_detail(output: &str) -> Result<ChronisEpic, RewindError> {
+    let mut id = String::new();
+    let mut title = String::new();
+    let mut priority = String::new();
+    let mut status = String::new();
+    let mut children = Vec::new();
+    let mut in_children = false;
+
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line == "---" {
+            in_children = true;
+            continue;
+        }
+
+        if !in_children {
+            // Parse key:value header
+            if let Some((key, value)) = line.split_once(':') {
+                match key {
+                    "id" => id = value.to_string(),
+                    "title" => title = value.to_string(),
+                    "priority" => priority = value.to_string(),
+                    "status" => status = value.to_string(),
+                    _ => {}
+                }
+            }
+        } else {
+            // Parse child task table
+            if line.starts_with('[') {
+                // Check if this is a different section header (e.g. [timestamp|event_type])
+                if !line.contains("id") || !line.contains("title") {
+                    // Different table — stop parsing children
+                    break;
+                }
+                continue; // Skip the child table header
+            }
+
+            let fields: Vec<&str> = line.split('|').collect();
+            if fields.len() >= 3 {
+                children.push(ChronisTask {
+                    id: fields[0].to_string(),
+                    status: fields[1].to_string(),
+                    title: fields[2].to_string(),
+                    task_type: "task".to_string(),
+                    priority: String::new(),
+                });
+            }
+        }
+    }
+
+    if id.is_empty() {
+        return Err(RewindError::Storage(
+            "Failed to parse epic detail: missing id".into(),
+        ));
+    }
+
+    Ok(ChronisEpic {
+        id,
+        title,
+        priority,
+        status,
+        children,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,6 +342,28 @@ mod tests {
         let tasks = parse_toon_list(input).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, "abc-123");
+    }
+
+    #[test]
+    fn parse_epic_detail_works() {
+        let input = "id:t-f024\ntype:epic\ntitle:PRD-007: LLM Router\npriority:p2\nstatus:open\narchived:false\n---\n[id|status|title]\nt-7c7e|open|US-007-01: RouterClient\nt-5236|open|US-007-02: Cooldown tracking\n[timestamp|event_type]\n2026-03-11 20:02:00|task.created\n";
+        let epic = parse_epic_detail(input).unwrap();
+        assert_eq!(epic.id, "t-f024");
+        assert_eq!(epic.title, "PRD-007: LLM Router");
+        assert_eq!(epic.priority, "p2");
+        assert_eq!(epic.status, "open");
+        assert_eq!(epic.children.len(), 2);
+        assert_eq!(epic.children[0].id, "t-7c7e");
+        assert_eq!(epic.children[0].title, "US-007-01: RouterClient");
+        assert_eq!(epic.children[1].status, "open");
+    }
+
+    #[test]
+    fn parse_epic_detail_no_children() {
+        let input = "id:t-abc\ntype:epic\ntitle:Empty Epic\npriority:p1\nstatus:open\n";
+        let epic = parse_epic_detail(input).unwrap();
+        assert_eq!(epic.id, "t-abc");
+        assert!(epic.children.is_empty());
     }
 
     #[test]

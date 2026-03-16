@@ -3,7 +3,167 @@ use ratatui::widgets::*;
 
 use rewind_cn_core::domain::model::TaskStatus;
 
-use super::app::App;
+use super::app::{App, BrowseApp};
+
+// ---------------------------------------------------------------------------
+// Epic browser view
+// ---------------------------------------------------------------------------
+
+pub fn draw_browse(f: &mut Frame, app: &BrowseApp) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Top bar
+            Constraint::Min(10),   // Main area
+            Constraint::Length(3), // Bottom bar
+        ])
+        .split(f.area());
+
+    draw_browse_top(f, app, chunks[0]);
+    draw_browse_main(f, app, chunks[1]);
+    draw_browse_bottom(f, chunks[2]);
+}
+
+fn draw_browse_top(f: &mut Frame, app: &BrowseApp, area: Rect) {
+    let total = app.epics.len();
+    let open = app.epics.iter().filter(|e| e.status == "open").count();
+    let title = format!(" rewind — Select an Epic  ({open} open / {total} total) ");
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    f.render_widget(block, area);
+}
+
+fn draw_browse_main(f: &mut Frame, app: &BrowseApp, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(area);
+
+    draw_epic_list(f, app, chunks[0]);
+    draw_epic_detail(f, app, chunks[1]);
+}
+
+fn draw_epic_list(f: &mut Frame, app: &BrowseApp, area: Rect) {
+    let items: Vec<ListItem> = app
+        .epics
+        .iter()
+        .map(|e| {
+            let icon = match e.status.as_str() {
+                "open" => "●",
+                "done" | "closed" => "✓",
+                _ => "○",
+            };
+            let style = match e.status.as_str() {
+                "open" => Style::default().fg(Color::White),
+                "done" | "closed" => Style::default().fg(Color::DarkGray),
+                _ => Style::default(),
+            };
+            let children_count = e.children.len();
+            ListItem::new(format!(
+                "{icon} {} [{}/{}]",
+                e.title,
+                e.priority,
+                children_count
+            ))
+            .style(style)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(" Epics "))
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ");
+
+    let mut state = ListState::default();
+    state.select(Some(app.selected));
+    f.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_epic_detail(f: &mut Frame, app: &BrowseApp, area: Rect) {
+    let Some(epic) = app.selected_epic() else {
+        let block = Block::default().borders(Borders::ALL).title(" Details ");
+        f.render_widget(block, area);
+        return;
+    };
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::from(Span::styled(
+        &epic.title,
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(format!(
+        "Status: {}  Priority: {}",
+        epic.status, epic.priority
+    )));
+    lines.push(Line::from(format!("ID: {}", epic.id)));
+    lines.push(Line::from(""));
+
+    if epic.children.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No tasks",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        let open = epic.children.iter().filter(|c| c.status == "open").count();
+        let done = epic.children.iter().filter(|c| c.status == "done").count();
+        lines.push(Line::from(Span::styled(
+            format!("Tasks ({} total, {} open, {} done):", epic.children.len(), open, done),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+
+        for child in &epic.children {
+            let icon = match child.status.as_str() {
+                "open" => "○",
+                "done" | "closed" => "✓",
+                "claimed" | "in-progress" => "◉",
+                _ => "○",
+            };
+            let style = match child.status.as_str() {
+                "done" | "closed" => Style::default().fg(Color::DarkGray),
+                "claimed" | "in-progress" => Style::default().fg(Color::Yellow),
+                _ => Style::default(),
+            };
+            lines.push(Line::from(Span::styled(
+                format!("  {icon} {}", child.title),
+                style,
+            )));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {} ", epic.id)),
+        )
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(paragraph, area);
+}
+
+fn draw_browse_bottom(f: &mut Frame, area: Rect) {
+    let text = " ↑↓/jk = navigate   Enter = select & import   q/Esc = quit ";
+    let bar = Paragraph::new(text)
+        .style(Style::default().fg(Color::White).bg(Color::DarkGray))
+        .block(Block::default());
+    f.render_widget(bar, area);
+}
+
+// ---------------------------------------------------------------------------
+// Execution dashboard view (existing)
+// ---------------------------------------------------------------------------
 
 pub fn draw(f: &mut Frame, app: &App) {
     let chunks = Layout::default()

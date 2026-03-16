@@ -237,6 +237,214 @@ pub async fn import_beads<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
     })
 }
 
+/// A user story section parsed from a PRD markdown file.
+#[derive(Debug, Clone)]
+struct PrdStory {
+    /// The US-xxx prefix extracted from the heading (e.g. "US-007-01").
+    prefix: String,
+    /// Full description text including acceptance criteria.
+    description: String,
+    /// Extracted acceptance criteria.
+    criteria: Vec<AcceptanceCriterion>,
+}
+
+/// Parse a PRD markdown file and extract user story sections.
+///
+/// Looks for `### US-xxx:` headings and collects everything up to the next
+/// heading of equal or higher level.
+fn parse_prd_stories(prd_content: &str) -> Vec<PrdStory> {
+    let mut stories = Vec::new();
+    let mut current_prefix = String::new();
+    let mut current_lines: Vec<&str> = Vec::new();
+
+    for line in prd_content.lines() {
+        if line.starts_with("### US-") || line.starts_with("### us-") {
+            // Flush previous story
+            if !current_prefix.is_empty() {
+                let description = current_lines.join("\n");
+                let criteria = extract_criteria_from_description(&description);
+                stories.push(PrdStory {
+                    prefix: current_prefix.clone(),
+                    description,
+                    criteria,
+                });
+            }
+
+            // Extract US-xxx prefix from heading like "### US-007-01: RouterClient with failover [Backend]"
+            let heading = line.trim_start_matches('#').trim();
+            current_prefix = heading
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            current_lines.clear();
+            current_lines.push(line);
+        } else if line.starts_with("## ") && !current_prefix.is_empty() {
+            // Higher-level heading — flush current story
+            let description = current_lines.join("\n");
+            let criteria = extract_criteria_from_description(&description);
+            stories.push(PrdStory {
+                prefix: current_prefix.clone(),
+                description,
+                criteria,
+            });
+            current_prefix.clear();
+            current_lines.clear();
+        } else if !current_prefix.is_empty() {
+            current_lines.push(line);
+        }
+    }
+
+    // Flush last story
+    if !current_prefix.is_empty() {
+        let description = current_lines.join("\n");
+        let criteria = extract_criteria_from_description(&description);
+        stories.push(PrdStory {
+            prefix: current_prefix,
+            description,
+            criteria,
+        });
+    }
+
+    stories
+}
+
+/// Try to find a PRD file in `tasks/` that matches the epic title.
+///
+/// Scans `tasks/*.md` for files whose content contains a heading matching the epic title.
+fn find_prd_for_epic(epic_title: &str) -> Option<String> {
+    let tasks_dir = Path::new("tasks");
+    if !tasks_dir.is_dir() {
+        return None;
+    }
+
+    let entries = std::fs::read_dir(tasks_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            // Match if the PRD contains a heading with the epic title or its PRD number
+            // e.g. epic_title = "PRD-007: LLM Router..." → look for "PRD-007" in the file
+            let prd_number = epic_title
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if !prd_number.is_empty() && content.contains(prd_number) {
+                return Some(content);
+            }
+        }
+    }
+    None
+}
+
+/// Import an epic and its child tasks from chronis into the engine.
+///
+/// Fetches the epic via `cn show`, then tries to find a matching PRD file in
+/// `tasks/` to populate task descriptions and acceptance criteria. Falls back
+/// to title-only import if no PRD is found.
+pub async fn import_epic_from_chronis<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
+    epic_id: &str,
+    engine: &RewindEngine<B>,
+) -> Result<ImportResult, String> {
+    use crate::infrastructure::chronis::ChronisBridge;
+
+    let epic = ChronisBridge::show_epic(epic_id)
+        .map_err(|e| format!("Failed to fetch epic: {e}"))?;
+
+    // Skip if epic is already done
+    if epic.status == "done" || epic.status == "closed" {
+        return Err(format!("Epic {} is already {}", epic.id, epic.status));
+    }
+
+    // Try to find a PRD file with story descriptions
+    let prd_stories = find_prd_for_epic(&epic.title)
+        .map(|content| parse_prd_stories(&content))
+        .unwrap_or_default();
+
+    let mut epics_created = 0;
+    let mut tasks_created = 0;
+    let mut skipped = 0;
+
+    // Extract epic-level quality gates from PRD if available
+    let quality_gates = find_prd_for_epic(&epic.title)
+        .map(|content| extract_quality_gates_from_description(&content))
+        .unwrap_or_default();
+
+    let events = engine
+        .create_epic(CreateEpic {
+            title: epic.title.clone(),
+            description: format!("Imported from chronis: {}", epic.id),
+            quality_gates,
+        })
+        .await
+        .map_err(|e| format!("Failed to create epic: {e}"))?;
+
+    let rewind_epic_id = match events.first() {
+        Some(RewindEvent::EpicCreated { epic_id, .. }) => epic_id.clone(),
+        _ => return Err("Failed to get epic ID from create event".into()),
+    };
+    epics_created += 1;
+
+    let mut id_map: HashMap<String, TaskId> = HashMap::new();
+
+    for child in &epic.children {
+        if child.status == "done" || child.status == "closed" {
+            skipped += 1;
+            continue;
+        }
+
+        // Match child task to PRD story by US-xxx prefix in the title
+        let matched_story = prd_stories.iter().find(|story| {
+            child.title.contains(&story.prefix)
+        });
+
+        let (description, criteria) = match matched_story {
+            Some(story) => (story.description.clone(), story.criteria.clone()),
+            None => {
+                // Fall back to chronis show for description
+                let desc = ChronisBridge::show_task(&child.id)
+                    .ok()
+                    .and_then(|detail| {
+                        detail
+                            .lines()
+                            .find_map(|line| line.strip_prefix("description:"))
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_default();
+                let crit = extract_criteria_from_description(&desc);
+                (desc, crit)
+            }
+        };
+
+        let events = engine
+            .create_task(CreateTask {
+                title: child.title.clone(),
+                description,
+                epic_id: Some(rewind_epic_id.clone()),
+                acceptance_criteria: criteria,
+                story_type: None,
+                depends_on: Vec::new(),
+            })
+            .await
+            .map_err(|e| format!("Failed to create task '{}': {e}", child.title))?;
+
+        if let Some(RewindEvent::TaskCreated { task_id, .. }) = events.first() {
+            id_map.insert(child.id.clone(), task_id.clone());
+        }
+        tasks_created += 1;
+    }
+
+    Ok(ImportResult {
+        epics_created,
+        tasks_created,
+        skipped,
+    })
+}
+
 /// Import from a file path, auto-detecting format.
 pub async fn import_file<B: allframe::cqrs::EventStoreBackend<RewindEvent>>(
     path: &Path,
@@ -410,5 +618,61 @@ mod tests {
             us001.acceptance_criteria[0].description,
             "Migration file exists"
         );
+    }
+
+    #[test]
+    fn parse_prd_stories_extracts_user_stories() {
+        let prd = r#"# PRD: Test Feature
+
+## Overview
+Some overview text.
+
+## User Stories
+
+### US-001: Add schema [Schema]
+As a developer, I want a schema.
+
+**Acceptance Criteria:**
+- [ ] Migration file exists
+- [ ] Migration runs successfully
+
+### US-002: Add endpoint [Backend]
+As a developer, I want an endpoint.
+
+**Acceptance Criteria:**
+- [ ] GET /api/data returns 200
+- [ ] Response has correct fields
+
+## Non-Goals
+Something.
+"#;
+
+        let stories = parse_prd_stories(prd);
+        assert_eq!(stories.len(), 2);
+
+        assert_eq!(stories[0].prefix, "US-001");
+        assert!(stories[0].description.contains("Migration file exists"));
+        assert_eq!(stories[0].criteria.len(), 2);
+        assert_eq!(stories[0].criteria[0].description, "Migration file exists");
+
+        assert_eq!(stories[1].prefix, "US-002");
+        assert_eq!(stories[1].criteria.len(), 2);
+        assert_eq!(stories[1].criteria[0].description, "GET /api/data returns 200");
+    }
+
+    #[test]
+    fn parse_prd_stories_handles_no_stories() {
+        let prd = "# PRD: Empty\n\nJust overview.";
+        let stories = parse_prd_stories(prd);
+        assert!(stories.is_empty());
+    }
+
+    #[test]
+    fn parse_prd_stories_matches_compound_prefixes() {
+        let prd = "### US-007-01: RouterClient with failover [Backend]\nDescription here.\n\n- [ ] Criterion one\n- [ ] Criterion two\n";
+        let stories = parse_prd_stories(prd);
+        assert_eq!(stories.len(), 1);
+        assert_eq!(stories[0].prefix, "US-007-01");
+        assert_eq!(stories[0].criteria.len(), 2);
     }
 }

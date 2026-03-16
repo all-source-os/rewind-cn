@@ -169,7 +169,7 @@ pub struct TaskView {
 }
 
 /// Projection that maintains the full backlog as a HashMap of task views.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct BacklogProjection {
     pub tasks: HashMap<String, TaskView>,
     /// Set of completed task IDs for fast dependency lookups.
@@ -294,7 +294,7 @@ impl BacklogProjection {
 }
 
 /// Tracks progress of epics (how many tasks completed vs total).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct EpicProgressProjection {
     pub epics: HashMap<String, EpicProgress>,
     /// Map task_id → epic_id for cross-referencing on TaskCompleted/TaskFailed.

@@ -79,6 +79,34 @@ impl Orchestrator {
         self
     }
 
+    /// Create an orchestrator with a custom coder backend (e.g., ClaudeCodeExecutor).
+    pub fn with_coder(
+        coder: Box<dyn TaskExecutor>,
+        evaluator_client: ProviderClient,
+        config: AgentConfig,
+        work_dir: PathBuf,
+        timeout_secs: u64,
+        max_retries: u32,
+    ) -> Self {
+        let use_chronis = ChronisBridge::is_available();
+        if use_chronis {
+            debug!("Chronis bridge enabled");
+        }
+
+        Self {
+            coder,
+            evaluator: EvaluatorAgent::new(evaluator_client, config),
+            agent_id: AgentId::generate(),
+            work_dir,
+            timeout_secs,
+            max_retries,
+            use_chronis,
+            epic_name: None,
+            project_context: None,
+            prompt_template_path: None,
+        }
+    }
+
     /// Create an orchestrator without chronis (for tests).
     #[cfg(test)]
     pub fn without_chronis(

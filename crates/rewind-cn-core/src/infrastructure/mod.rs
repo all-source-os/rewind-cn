@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod agent;
 pub mod chronis;
+pub mod claude_code;
 pub mod coder;
 pub mod command_bridge;
 pub mod engine;
