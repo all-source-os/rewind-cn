@@ -2,7 +2,7 @@
 
 **Autonomous coding agent orchestrator built on CQRS + Event Sourcing.**
 
-Rewind decomposes product requirements into tasks, schedules them across AI agent workers, and tracks progress — all backed by an append-only event store for full auditability. Multi-provider LLM support (Anthropic, OpenAI) with per-role configuration.
+Rewind decomposes product requirements into tasks, schedules them across AI agent workers, and tracks progress — all backed by an append-only event store for full auditability. Multi-provider LLM support (Anthropic, OpenAI, Ollama) with per-role configuration. Use the Anthropic API directly or delegate to Claude Code CLI.
 
 ```
 rewind plan -f prd.md
@@ -67,15 +67,16 @@ rewind query task-summary
 
 ### Configuration
 
-After `rewind init`, edit `rewind.toml`:
+After `rewind init`, edit `.rewind/rewind.toml`:
 
 ```toml
 project_name = "my-project"
 
 # Agent configuration — per-role provider overrides supported
 [agent]
-provider = "anthropic"         # default provider for all roles
+provider = "anthropic"         # anthropic | openai | ollama
 api_key_env = "ANTHROPIC_API_KEY"
+coder_backend = "api"          # "api" (LLM API) or "claude-code" (Claude Code CLI)
 
 [agent.planner]
 model = "claude-sonnet-4-5-20250514"
@@ -116,7 +117,35 @@ model = "claude-sonnet-4-5-20250514"      # inherits anthropic
 model = "claude-haiku-4-5-20251001"       # inherits anthropic
 ```
 
-Supported providers: `anthropic`, `openai`. Powered by [rig-core](https://crates.io/crates/rig-core).
+Supported providers: `anthropic`, `openai`, `ollama`. Powered by [rig-core](https://crates.io/crates/rig-core).
+
+### Ollama (Local Models)
+
+Run with local models — no API keys needed:
+
+```toml
+[agent]
+provider = "ollama"
+coder_backend = "claude-code"    # use Claude Code CLI for coding
+
+[agent.evaluator]
+model = "qwen2.5-coder:14b"
+# base_url = "http://localhost:11434/v1"   # default
+```
+
+### Claude Code Backend
+
+Use `claude` CLI instead of the Anthropic API for the coder role:
+
+```toml
+[agent]
+coder_backend = "claude-code"
+
+[agent.coder]
+model = "claude-sonnet-4-5-20250514"   # passed to claude --model
+```
+
+This delegates coding to Claude Code's built-in tools (Read, Edit, Bash, etc.) via `claude --print --dangerously-skip-permissions`. No `ANTHROPIC_API_KEY` needed for the coder role.
 
 ## Commands
 
@@ -135,7 +164,7 @@ Generates an execution plan (epic + tasks) from a description or PRD file.
 
 ### `rewind run`
 
-Picks up pending tasks and executes them through agent workers.
+Picks up pending tasks and executes them through agent workers. When no pending tasks exist and chronis is available, launches a TUI epic browser to import from chronis.
 
 | Flag | Description |
 |---|---|
@@ -203,50 +232,32 @@ Starts an [MCP](https://modelcontextprotocol.io) server over stdio for IDE integ
 
 ## Key Features
 
-### TUI Dashboard
+### TUI Epic Browser
 
-Live dashboard during `rewind run --tui` showing task progress, agent activity, and epic completion in real time.
+When `rewind run` finds no pending tasks, it automatically browses chronis epics in a TUI, lets you select one, imports its tasks (enriched with descriptions from PRD files in `tasks/`), and transitions to the execution dashboard.
+
+### TUI Execution Dashboard
+
+Live dashboard during `rewind run --tui` showing task progress, agent activity, and epic completion in real time. Pre-seeded with existing backlog state so tasks imported before the TUI starts are visible immediately.
 
 ### Git Worktree Parallel Execution
 
 `rewind run --parallel` isolates each agent in its own git worktree, enabling true parallel execution without merge conflicts. Changes are merged back on task completion.
 
-### Beads Import
-
-Import existing task hierarchies from chronis/beads JSONL files. Automatically extracts acceptance criteria, quality gates, and dependency graphs.
-
-### Execution Analytics
-
-Query the event store with `rewind query` for task timing, tool usage patterns, session history, and epic progress analytics.
-
-## Event Sourcing Model
-
-Every state change is captured as an immutable event:
-
-```
-TaskCreated → TaskAssigned → TaskStarted → TaskCompleted
-                                         → TaskFailed
-
-EpicCreated → EpicCompleted
-
-SessionStarted → SessionEnded
-
-AgentToolCall · QualityGateRan
-```
-
-State is rebuilt by replaying events through projections — no mutable database, full audit trail, time-travel debugging for free.
-
-### Projections
-
-- **BacklogProjection** — materialized view of all tasks and their current status
-- **EpicProgressProjection** — tracks completion percentage per epic
-
-## Chronis Integration
+### Chronis Integration
 
 Rewind integrates with [Chronis](https://all-source-os.github.io/all-source/chronis/) as an external task tracker:
 
 - **Chronis** owns the task backlog (definitions, dependencies, readiness)
 - **Rewind** owns execution state (sessions, agent assignment, event sourcing)
+
+### Beads Import
+
+Import existing task hierarchies from chronis/beads JSONL files. Automatically extracts acceptance criteria, quality gates, and dependency graphs. When chronis tasks lack descriptions, scans `tasks/*.md` for matching PRD files and extracts user story content.
+
+### Execution Analytics
+
+Query the event store with `rewind query` for task timing, tool usage patterns, session history, and epic progress analytics.
 
 ### Skill Pipeline
 
@@ -256,10 +267,33 @@ Rewind integrates with [Chronis](https://all-source-os.github.io/all-source/chro
 3. rewind run       → Execute with agent orchestration
 ```
 
+## Event Sourcing Model
+
+Every state change is captured as an immutable event:
+
+```
+TaskCreated → TaskAssigned → TaskStarted → TaskCompleted
+                                         → TaskFailed → TaskRetried
+
+EpicCreated → EpicCompleted
+
+SessionStarted → SessionEnded
+
+AgentToolCall · CriterionChecked · QualityGateRan · IterationLogged · ProgressNoted
+```
+
+State is rebuilt by replaying events through projections — no mutable database, full audit trail, time-travel debugging for free.
+
+### Projections
+
+- **BacklogProjection** — materialized view of all tasks and their current status
+- **EpicProgressProjection** — tracks completion percentage per epic
+- **AnalyticsProjection** — tool usage, iteration counts, progress notes
+
 ## Development
 
 ```bash
-# Run tests (112 passing)
+# Run tests (196+ passing)
 cargo test
 
 # Lint
@@ -296,12 +330,17 @@ crates/rewind-cn-core/src/
     ├── orchestrator.rs    # Multi-agent orchestration loop
     ├── planner.rs     # LLM-powered plan decomposition
     ├── coder.rs       # Coding agent with tool use
+    ├── claude_code.rs # Claude Code CLI backend
     ├── evaluator.rs   # Code review agent
-    ├── llm.rs         # Multi-provider client factory
-    ├── importer.rs    # Beads JSONL/JSON import
+    ├── llm.rs         # Multi-provider client factory (Anthropic/OpenAI/Ollama)
+    ├── chronis.rs     # Chronis task tracker bridge
+    ├── importer.rs    # Beads/PRD import with story matching
     ├── worktree.rs    # Git worktree management
+    ├── gate_runner.rs # Quality gate execution
     ├── telemetry.rs   # PostHog telemetry (opt-in)
     ├── mcp_server.rs  # JSON-RPC 2.0 MCP server
+    ├── sanitize.rs    # Prompt injection mitigation
+    ├── prompt_template.rs # Tera prompt rendering
     └── toon.rs        # Token-optimized output format
 ```
 

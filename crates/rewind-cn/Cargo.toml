@@ -11,7 +11,7 @@ name = "rewind"
 path = "src/main.rs"
 
 [dependencies]
-rewind-cn-core = { version = "0.2.1", path = "../rewind-cn-core" }
+rewind-cn-core = { version = "0.3.0", path = "../rewind-cn-core" }
 atty = "0.2"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }

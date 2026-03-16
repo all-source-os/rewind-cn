@@ -4,7 +4,7 @@ members = ["crates/rewind-cn", "crates/rewind-cn-core"]
 
 [workspace.package]
 edition = "2021"
-version = "0.2.1"
+version = "0.3.0"
 license = "MIT"
 description = "Autonomous coding agent orchestrator built on CQRS + Event Sourcing"
 repository = "https://github.com/all-source-os/rewind-cn"

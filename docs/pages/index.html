@@ -729,7 +729,7 @@
             <h1>Autonomous Agent Orchestrator</h1>
             <p class="tagline">
                 Decompose requirements into tasks, schedule AI coding agents, and track progress &mdash; all backed by an append-only event store for full auditability.
-                Multi-provider LLM support (Anthropic, OpenAI). Built on <a href="https://all-source.xyz">AllSource</a> CQRS + Event Sourcing.
+                Multi-provider LLM support (Anthropic, OpenAI, Ollama) with Claude Code CLI backend. Built on <a href="https://all-source.xyz">AllSource</a> CQRS + Event Sourcing.
             </p>
             <div class="badges">
                 <span class="badge badge-purple">Rust 2024 Edition</span>
@@ -785,11 +785,19 @@
                 </div>
                 <div class="feature-card">
                     <h3>Multi-Provider LLM <span class="feature-tag tag-agent">Agent</span></h3>
-                    <p>Per-role provider configuration: use Anthropic for coding, OpenAI for planning, or any mix. Each role (planner, coder, evaluator) independently configurable. Powered by <a href="https://crates.io/crates/rig-core">rig-core</a>.</p>
+                    <p>Per-role provider configuration: Anthropic, OpenAI, or Ollama (local models, no API keys). Each role (planner, coder, evaluator) independently configurable. Powered by <a href="https://crates.io/crates/rig-core">rig-core</a>.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Claude Code Backend <span class="feature-tag tag-agent">Agent</span></h3>
+                    <p>Use <code>claude</code> CLI as the coder instead of the API. Delegates to Claude Code's built-in tools (Read, Edit, Bash) via <code>--print --dangerously-skip-permissions</code>. No API key needed for the coder role.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>TUI Epic Browser <span class="feature-tag tag-core">Core</span></h3>
+                    <p>When no pending tasks exist, browse chronis epics in a TUI, select one, import tasks enriched with PRD descriptions, and transition to the execution dashboard.</p>
                 </div>
                 <div class="feature-card">
                     <h3>TUI Dashboard <span class="feature-tag tag-core">Core</span></h3>
-                    <p>Live terminal dashboard during execution with <code>--tui</code>. See task progress, agent activity, and epic completion in real time.</p>
+                    <p>Live terminal dashboard during execution with <code>--tui</code>. See task progress, agent activity, and epic completion in real time. Pre-seeded with backlog state.</p>
                 </div>
                 <div class="feature-card">
                     <h3>Git Worktree Parallel <span class="feature-tag tag-agent">Agent</span></h3>
@@ -998,6 +1006,30 @@
                     <code>rewind.session.ended</code>
                     <span class="source">rewind run</span>
                 </div>
+                <div class="event-item">
+                    <code>rewind.task.retried</code>
+                    <span class="source">orchestrator</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.criterion.checked</code>
+                    <span class="source">evaluator</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.agent.tool_call</code>
+                    <span class="source">coder agent</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.iteration.logged</code>
+                    <span class="source">orchestrator</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.progress.noted</code>
+                    <span class="source">agent worker</span>
+                </div>
+                <div class="event-item">
+                    <code>rewind.gate.ran</code>
+                    <span class="source">gate runner</span>
+                </div>
             </div>
         </div>
     </section>
@@ -1049,7 +1081,7 @@
         <div class="container">
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="value">112</div>
+                    <div class="value">196+</div>
                     <div class="label">Tests Passing</div>
                 </div>
                 <div class="stat-card">
@@ -1057,11 +1089,11 @@
                     <div class="label">Architecture Layers</div>
                 </div>
                 <div class="stat-card">
-                    <div class="value">9</div>
+                    <div class="value">23+</div>
                     <div class="label">Event Types</div>
                 </div>
                 <div class="stat-card">
-                    <div class="value">2</div>
+                    <div class="value">3</div>
                     <div class="label">LLM Providers</div>
                 </div>
             </div>
