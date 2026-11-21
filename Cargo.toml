@@ -10,3 +10,12 @@ description = "Autonomous coding agent orchestrator built on CQRS + Event Sourci
 repository = "https://github.com/all-source-os/rewind-cn"
 keywords = ["cli", "cqrs", "event-sourcing", "agent", "orchestrator"]
 categories = ["command-line-utilities", "development-tools"]
+
+# Full debug info for every dependency is most of a dev build's size on disk.
+# Dependencies keep none; workspace crates keep line tables, so a backtrace
+# still names the file and line in our code.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
